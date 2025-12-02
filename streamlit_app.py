@@ -5,7 +5,7 @@ import json
 
 # Page configuration
 st.set_page_config(
-    page_title="Text Classifier",
+    page_title="Dictionary Text Classifier",
     page_icon="🔍",
     layout="wide"
 )
