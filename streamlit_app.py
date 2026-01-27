@@ -98,7 +98,7 @@ if uploaded_file is not None:
 
             # Gracefully fill missing optional fields.
             conversation_id = conversation.get("conversation_id") or f"conversation_{index}"
-            llm = conversation.get("llm") or "unknown"
+            model = conversation.get("model") or conversation.get("llm") or "unknown"
             messages = conversation.get("messages")
 
             # Messages must be a list of objects with valid role and non-empty content.
@@ -127,7 +127,7 @@ if uploaded_file is not None:
             valid_conversations.append(
                 {
                     "conversation_id": conversation_id,
-                    "llm": llm,
+                    "model": model,
                     "messages": messages,
                 }
             )
@@ -232,7 +232,7 @@ if uploaded_file is not None:
                 per_conversation_metrics.append(
                     {
                         "conversation_id": conversation["conversation_id"],
-                        "llm": conversation["llm"],
+                        "model": conversation["model"],
                         "total_turns": total_turns,
                         "user_turns": user_turns,
                         "assistant_turns": assistant_turns,
@@ -249,7 +249,7 @@ if uploaded_file is not None:
                 display_rows.append(
                     {
                         "conversation_id": row["conversation_id"],
-                        "llm": row["llm"],
+                        "model": row["model"],
                         "total_turns": int(row["total_turns"]),
                         "user_turns": int(row["user_turns"]),
                         "assistant_turns": int(row["assistant_turns"]),
