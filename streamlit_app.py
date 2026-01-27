@@ -455,6 +455,7 @@ if uploaded_file is not None:
                             {
                                 "conversation_id": conversation["conversation_id"],
                                 "context": context_summary.strip(),
+                                "model": conversation["model"],
                                 "product_recommended": product_summary.strip(),
                             }
                         )
