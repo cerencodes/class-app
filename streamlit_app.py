@@ -204,6 +204,9 @@ if uploaded_file is not None:
                 difficult_words = sum(
                     1 for word in assistant_tokens if word not in DALE_CHALL_EASY_WORDS
                 )
+                polysyllabic_words = sum(
+                    1 for word in assistant_tokens if syllable_count_word(word) >= 3
+                )
 
                 if assistant_words:
                     ari = 4.71 * (assistant_chars / assistant_words)
@@ -214,6 +217,21 @@ if uploaded_file is not None:
                         - 1.015 * (assistant_words / assistant_sentences)
                         - 84.6 * (assistant_syllables / assistant_words)
                     )
+                    flesch_kincaid_grade = (
+                        0.39 * (assistant_words / assistant_sentences)
+                        + 11.8 * (assistant_syllables / assistant_words)
+                        - 15.59
+                    )
+                    smog_denominator = assistant_sentences or 1
+                    smog_index = (
+                        1.043 * (30 * (polysyllabic_words / smog_denominator)) ** 0.5
+                        + 3.1291
+                    )
+                    gunning_denominator = assistant_sentences or 1
+                    gunning_fog_index = 0.4 * (
+                        (assistant_words / gunning_denominator)
+                        + 100 * (polysyllabic_words / assistant_words)
+                    )
                     difficult_pct = (difficult_words / assistant_words) * 100
                     dale_chall_score = 0.1579 * difficult_pct + 0.0496 * (
                         assistant_words / assistant_sentences
@@ -223,6 +241,9 @@ if uploaded_file is not None:
                 else:
                     ari = 0
                     flesch_reading_ease = 0
+                    flesch_kincaid_grade = 0
+                    smog_index = 0
+                    gunning_fog_index = 0
                     dale_chall_score = 0
 
                 avg_assistant_words = (
@@ -239,6 +260,9 @@ if uploaded_file is not None:
                         "avg_assistant_words_per_message": avg_assistant_words,
                         "ari": ari,
                         "flesch_reading_ease": flesch_reading_ease,
+                        "flesch_kincaid_grade": flesch_kincaid_grade,
+                        "smog_index": smog_index,
+                        "gunning_fog_index": gunning_fog_index,
                         "dale_chall_score": dale_chall_score,
                     }
                 )
@@ -256,12 +280,15 @@ if uploaded_file is not None:
                         "avg_assistant_words_per_message": int(
                             round(row["avg_assistant_words_per_message"])
                         ),
-                        "ari": round(row["ari"], 2),
                         "flesch_reading_ease": round(row["flesch_reading_ease"], 2),
+                        "flesch_kincaid_grade": round(row["flesch_kincaid_grade"], 2),
+                        "gunning_fog_index": round(row["gunning_fog_index"], 2),
+                        "smog_index": round(row["smog_index"], 2),
+                        "ari": round(row["ari"], 2),
                         "dale_chall_score": round(row["dale_chall_score"], 2),
                         "clears_all_3_metrics": (
-                            row["ari"] <= 10
-                            and row["flesch_reading_ease"] >= 60
+                            row["ari"] <= 8
+                            and row["flesch_reading_ease"] <= 70
                             and row["dale_chall_score"] <= 7.0
                         ),
                     }
@@ -279,16 +306,31 @@ if uploaded_file is not None:
                 display_df.style.format(
                     {
                         "avg_assistant_words_per_message": "{:.0f}",
-                        "ari": "{:.2f}",
                         "flesch_reading_ease": "{:.2f}",
+                        "flesch_kincaid_grade": "{:.2f}",
+                        "gunning_fog_index": "{:.2f}",
+                        "smog_index": "{:.2f}",
+                        "ari": "{:.2f}",
                         "dale_chall_score": "{:.2f}",
                     }
                 )
-                .applymap(lambda v: color_good(v, 10, "le"), subset=["ari"])
                 .applymap(
-                    lambda v: color_good(v, 60, "ge"),
+                    lambda v: color_good(v, 70, "le"),
                     subset=["flesch_reading_ease"],
                 )
+                .applymap(
+                    lambda v: color_good(v, 9, "le"),
+                    subset=["flesch_kincaid_grade"],
+                )
+                .applymap(
+                    lambda v: color_good(v, 8, "le"),
+                    subset=["gunning_fog_index"],
+                )
+                .applymap(
+                    lambda v: color_good(v, 9, "le"),
+                    subset=["smog_index"],
+                )
+                .applymap(lambda v: color_good(v, 8, "le"), subset=["ari"])
                 .applymap(
                     lambda v: color_good(v, 7, "le"),
                     subset=["dale_chall_score"],
@@ -320,19 +362,37 @@ if uploaded_file is not None:
                 f"Clears all 3 thresholds: {clears_count} of {total_count} "
                 f"({clears_pct:.1f}%)"
             )
-            ari_pass_count = sum(display_df["ari"] <= 10)
+            ari_pass_count = sum(display_df["ari"] <= 8)
             ari_pass_pct = (ari_pass_count / total_count * 100) if total_count else 0
             st.write(
                 f"ARI pass rate: {ari_pass_count} of {total_count} "
                 f"({ari_pass_pct:.1f}%)"
             )
-            flesch_pass_count = sum(display_df["flesch_reading_ease"] >= 60)
+            flesch_pass_count = sum(display_df["flesch_reading_ease"] <= 70)
             flesch_pass_pct = (
                 (flesch_pass_count / total_count * 100) if total_count else 0
             )
             st.write(
                 f"Flesch Reading Ease pass rate: {flesch_pass_count} of {total_count} "
                 f"({flesch_pass_pct:.1f}%)"
+            )
+            fkgl_pass_count = sum(display_df["flesch_kincaid_grade"] < 9)
+            fkgl_pass_pct = (fkgl_pass_count / total_count * 100) if total_count else 0
+            st.write(
+                f"Flesch-Kincaid Grade Level pass rate: {fkgl_pass_count} of {total_count} "
+                f"({fkgl_pass_pct:.1f}%)"
+            )
+            fog_pass_count = sum(display_df["gunning_fog_index"] < 8)
+            fog_pass_pct = (fog_pass_count / total_count * 100) if total_count else 0
+            st.write(
+                f"Gunning Fog Index pass rate: {fog_pass_count} of {total_count} "
+                f"({fog_pass_pct:.1f}%)"
+            )
+            smog_pass_count = sum(display_df["smog_index"] < 9)
+            smog_pass_pct = (smog_pass_count / total_count * 100) if total_count else 0
+            st.write(
+                f"SMOG Index pass rate: {smog_pass_count} of {total_count} "
+                f"({smog_pass_pct:.1f}%)"
             )
             dale_pass_count = sum(display_df["dale_chall_score"] <= 7.0)
             dale_pass_pct = (dale_pass_count / total_count * 100) if total_count else 0
@@ -344,16 +404,28 @@ if uploaded_file is not None:
                 st.markdown(
                     """
                     - **ARI (Automated Readability Index):**
-                      Lower scores indicate easier reading. Values around 1–6 are
-                      easy/elementary, 7–12 are middle to early high school, and
-                      13+ indicates more complex text.
-                    - **Flesch–Kincaid Reading Ease:**
-                      Higher scores are easier to read. 90–100 is very easy,
-                      60–70 is standard/easily understood, and below 30 is very
-                      difficult.
-                    - **Dale–Chall:**
+                      Lower scores indicate easier reading. Values around 1-6 are
+                      easy/elementary, 7-12 are middle to early high school, and
+                      13+ indicates more complex text. Threshold: <= 8.
+                    - **Flesch-Kincaid Reading Ease:**
+                      Higher scores are easier to read. 90-100 is very easy,
+                      60-70 is standard/easily understood, and below 30 is very
+                      difficult. Threshold: <= 70.
+                    - **Flesch-Kincaid Grade Level (FKGL):**
+                      Estimates the U.S. school grade level required to understand
+                      the text. Rough bands: <=8 middle school, 9-10 high school,
+                      11-12 college, and >12 advanced. Threshold: < 9.
+                    - **Dale-Chall:**
                       Lower scores are easier. About 4.9 or lower is easy,
-                      5.0–6.9 is average, and 7.0+ is difficult.
+                      5.0-6.9 is average, and 7.0+ is difficult. Threshold: <= 7.0.
+                    - **SMOG Index:**
+                      Estimates years of education required based on the density
+                      of complex (3+ syllable) words. Rough bands: <=8 middle school,
+                      9-10 high school, 11-12 college, and >12 advanced. Threshold: < 9.
+                    - **Gunning Fog Index:**
+                      Estimates years of education required based on sentence length
+                      and complex word density. Rough bands: <=8 middle school,
+                      9-10 high school, 11-12 college, and >12 advanced. Threshold: < 8.
                     """
             )
 
