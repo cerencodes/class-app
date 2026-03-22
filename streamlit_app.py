@@ -1,9 +1,10 @@
 import json
-from urllib import error, request
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
+
+from openrouter_utils import openrouter_chat_completion
 
 with open("dale_chall_easy_words.txt", "r", encoding="utf-8") as file:
     DALE_CHALL_EASY_WORDS = {line.strip().lower() for line in file if line.strip()}
@@ -21,55 +22,6 @@ with st.sidebar:
         type=["json"],
         label_visibility="collapsed",
     )
-    st.subheader("Select LLM")
-    openrouter_api_key = st.text_input("OpenRouter API Key", type="password")
-    evaluation_model = st.selectbox(
-        "Evaluation Model",
-        [
-            "openai/gpt-4o-mini",
-            "anthropic/claude-3.5-haiku",
-            "google/gemini-2.0-flash-001",
-        ],
-    )
-
-
-def openrouter_chat_completion(api_key: str, model: str, messages: list[dict]) -> str | None:
-    if not api_key:
-        st.warning("OpenRouter API key is missing.")
-        return None
-
-    payload = json.dumps({"model": model, "messages": messages}).encode("utf-8")
-    req = request.Request(
-        "https://openrouter.ai/api/v1/chat/completions",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "http://localhost",
-            "X-Title": "Chatbot Evaluator",
-        },
-        method="POST",
-    )
-
-    try:
-        with request.urlopen(req, timeout=30) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except error.HTTPError as exc:
-        st.error(f"OpenRouter request failed: {exc.code} {exc.reason}")
-        return None
-    except error.URLError as exc:
-        st.error(f"OpenRouter request failed: {exc.reason}")
-        return None
-    except Exception as exc:
-        st.error(f"OpenRouter request failed: {exc}")
-        return None
-
-    try:
-        return data["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError):
-        st.error("OpenRouter response format was unexpected.")
-        return None
-
 if uploaded_file is not None:
     try:
         transcript = json.load(uploaded_file)
@@ -430,6 +382,18 @@ if uploaded_file is not None:
             )
 
             st.subheader("Accuracy Performance")
+            st.caption(
+                "Enter your API key and select a model before running the accuracy analysis."
+            )
+            openrouter_api_key = st.text_input("OpenRouter API Key", type="password")
+            evaluation_model = st.selectbox(
+                "Evaluation Model",
+                [
+                    "openai/gpt-4o-mini",
+                    "anthropic/claude-3.5-haiku",
+                    "google/gemini-2.0-flash-001",
+                ],
+            )
             default_prompt = (
                 "#Task\n"
                 "Summarize user problem and requested features using only user messages.\n"
@@ -494,15 +458,21 @@ if uploaded_file is not None:
                             context_summary = ""
                         else:
                             prompt = context_prompt.strip() or default_prompt
-                            context_summary = openrouter_chat_completion(
-                                openrouter_api_key,
-                                evaluation_model,
-                                [
-                                    {"role": "system", "content": prompt},
-                                    {"role": "user", "content": "\n".join(user_messages)},
-                                ],
-                            )
-                            context_summary = context_summary or ""
+                            try:
+                                context_summary = openrouter_chat_completion(
+                                    openrouter_api_key,
+                                    evaluation_model,
+                                    [
+                                        {"role": "system", "content": prompt},
+                                        {
+                                            "role": "user",
+                                            "content": "\n".join(user_messages),
+                                        },
+                                    ],
+                                )
+                            except Exception as exc:
+                                st.error(str(exc))
+                                context_summary = ""
 
                         if not assistant_messages:
                             product_summary = ""
@@ -510,18 +480,24 @@ if uploaded_file is not None:
                             product_prompt_text = (
                                 product_prompt.strip() or default_product_prompt
                             )
-                            product_summary = openrouter_chat_completion(
-                                openrouter_api_key,
-                                evaluation_model,
-                                [
-                                    {"role": "system", "content": product_prompt_text},
-                                    {
-                                        "role": "user",
-                                        "content": "\n".join(assistant_messages),
-                                    },
-                                ],
-                            )
-                            product_summary = product_summary or ""
+                            try:
+                                product_summary = openrouter_chat_completion(
+                                    openrouter_api_key,
+                                    evaluation_model,
+                                    [
+                                        {
+                                            "role": "system",
+                                            "content": product_prompt_text,
+                                        },
+                                        {
+                                            "role": "user",
+                                            "content": "\n".join(assistant_messages),
+                                        },
+                                    ],
+                                )
+                            except Exception as exc:
+                                st.error(str(exc))
+                                product_summary = ""
 
                         context_rows.append(
                             {
