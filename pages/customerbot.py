@@ -24,9 +24,17 @@ DEFAULT_MODELS = [
 MODEL_OPTIONS = [
     "openai/gpt-4o-mini",
     "openai/gpt-4o",
+    "openai/gpt-5-mini",
+    "openai/gpt-5",
+    "openai/gpt-5.4-mini",
+    "openai/gpt-5.4",
     "anthropic/claude-3.5-haiku",
     "anthropic/claude-3.7-sonnet",
+    "anthropic/claude-haiku-4.5",
+    "anthropic/claude-sonnet-4.6",
+    "anthropic/claude-opus-4.6",
     "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash",
     "google/gemini-2.5-pro",
     "meta-llama/llama-3.3-70b-instruct",
     "mistralai/mistral-large",
@@ -75,17 +83,22 @@ DEFAULT_EXCLUSION_CRITERIA = (
     "where needed)"
 )
 DEFAULT_CONSTRAINTS = (
-    "- score must be an integer from 1 to 5\n"
-    "- reasoning must be 1-2 short sentences\n"
+    "- return a flat JSON object only\n"
+    '- for each scored dimension, use keys named "<dimension>_score" and "<dimension>_reasoning"\n'
+    "- each *_score value must be an integer from 1 to 5\n"
+    "- each *_reasoning value must be 1-2 short sentences\n"
+    "- optional aggregate fields are allowed (for example average_empathy_score)\n"
     "- output valid JSON only\n"
     "- do not return markdown, code fences, or extra text"
 )
 DEFAULT_EXAMPLES = (
     "Example output:\n"
     '{\n'
-    '  "score": 2,\n'
-    '  "reasoning": "Some viewpoint alignment (thicker grip) but minimal '
-    'reassurance or personalization beyond restating need."\n'
+    '  "individual_attention_score": 2,\n'
+    '  "individual_attention_reasoning": "Some viewpoint alignment but weak personalization.",\n'
+    '  "caring_tone_score": 3,\n'
+    '  "caring_tone_reasoning": "The tone is somewhat reassuring but not especially warm.",\n'
+    '  "average_empathy_score": 2.5\n'
     '}'
 )
 BLANK_PROMPT_VALUE = ""
@@ -148,10 +161,12 @@ def build_system_prompt() -> str:
         (
             "Output Format",
             (
-                'Return valid JSON with exactly two keys: "score" and "reasoning". '
-                'The "score" value must contain only the final rating. '
-                'The "reasoning" value must be 1-2 sentences explaining the score. '
-                "Do not include any keys other than score and reasoning."
+                "Return valid JSON only as a flat object. For each scored dimension, "
+                'use exactly two keys named "<dimension>_score" and '
+                '"<dimension>_reasoning". Each "<dimension>_score" must be an integer '
+                'from 1 to 5. Each "<dimension>_reasoning" must be 1-2 sentences. '
+                "Optional aggregate scalar fields are allowed. Do not return markdown, "
+                "code fences, or extra text."
             ),
         ),
     ]
@@ -200,6 +215,11 @@ def normalize_likert_score(value: object) -> int | None:
     if value is None or pd.isna(value):
         return None
 
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        numeric_value = float(value)
+        if numeric_value.is_integer() and 1 <= int(numeric_value) <= 5:
+            return int(numeric_value)
+
     text = str(value).strip()
     if not text:
         return None
@@ -207,13 +227,20 @@ def normalize_likert_score(value: object) -> int | None:
     if text in {"1", "2", "3", "4", "5"}:
         return int(text)
 
+    try:
+        numeric_value = float(text)
+        if numeric_value.is_integer() and 1 <= int(numeric_value) <= 5:
+            return int(numeric_value)
+    except ValueError:
+        pass
+
     return None
 
 
-def extract_score_and_reasoning(raw_output: str) -> tuple[str, str]:
+def extract_structured_result(raw_output: str) -> dict[str, object]:
     text = raw_output.strip()
     if not text:
-        return "", ""
+        return {}
 
     fenced_match = re.search(r"```(?:\w+)?\s*(.*?)```", raw_output, flags=re.DOTALL)
     if fenced_match:
@@ -222,31 +249,105 @@ def extract_score_and_reasoning(raw_output: str) -> tuple[str, str]:
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
-            score_value = ""
-            reasoning_value = ""
-            for key in ("score", "rating", "label", "value"):
-                if key in parsed and parsed[key] is not None:
-                    score_value = str(parsed[key]).strip()
-                    break
-            for key in ("reasoning", "reason", "rationale", "explanation"):
-                if key in parsed and parsed[key] is not None:
-                    reasoning_value = str(parsed[key]).strip()
-                    break
-            return score_value, reasoning_value
+            flattened: dict[str, object] = {}
+            for key, value in parsed.items():
+                if value is None:
+                    continue
+                normalized_key = str(key).strip()
+                if not normalized_key:
+                    continue
+                if isinstance(value, (dict, list)):
+                    flattened[normalized_key] = json.dumps(value, ensure_ascii=True)
+                elif isinstance(value, (str, int, float, bool)):
+                    flattened[normalized_key] = value
+                else:
+                    flattened[normalized_key] = str(value)
+            return flattened
         if isinstance(parsed, (str, int, float)):
-            return str(parsed).strip(), ""
+            return {"score": str(parsed).strip()}
     except Exception:
         pass
 
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     if not lines:
-        return "", ""
+        return {}
     if len(lines) == 1:
-        return lines[0].strip().strip('"').strip("'"), ""
+        return {"score": lines[0].strip().strip('"').strip("'")}
 
-    score_value = lines[0].strip().strip('"').strip("'")
-    reasoning_value = " ".join(lines[1:]).strip()
-    return score_value, reasoning_value
+    return {
+        "score": lines[0].strip().strip('"').strip("'"),
+        "reasoning": " ".join(lines[1:]).strip(),
+    }
+
+
+def normalize_output_field_name(field_name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", str(field_name).strip()).strip("_")
+    return normalized.lower() or "value"
+
+
+def normalize_output_payload(payload: dict[str, object]) -> dict[str, object]:
+    normalized_payload: dict[str, object] = {}
+    for key, value in payload.items():
+        normalized_payload[normalize_output_field_name(key)] = value
+    return normalized_payload
+
+
+def build_model_column_prefix(model_name: str) -> str:
+    normalized = re.sub(r"[^a-zA-Z0-9]+", "_", model_name).strip("_")
+    return normalized.lower() or "model"
+
+
+def collect_model_metric_sets(model_fields: dict[str, set[str]]) -> tuple[list[str], list[str]]:
+    if not model_fields:
+        return [], []
+
+    comparable_score_fields = sorted(
+        set.intersection(
+            *[
+                {
+                    field[: -len("_score")]
+                    for field in fields
+                    if field.endswith("_score")
+                    and f"{field[: -len('_score')]}_reasoning" in fields
+                }
+                for fields in model_fields.values()
+            ]
+        )
+    )
+    paired_field_names = {
+        field_name
+        for dimension_name in comparable_score_fields
+        for field_name in (f"{dimension_name}_score", f"{dimension_name}_reasoning")
+    }
+    aggregate_fields = sorted(
+        set.union(
+            *[
+                {
+                    field
+                    for field in fields
+                    if field not in paired_field_names
+                }
+                for fields in model_fields.values()
+            ]
+        )
+    )
+    return comparable_score_fields, aggregate_fields
+
+
+def build_alpha_input_dataframe(
+    results_df: pd.DataFrame, model_prefixes: list[str], comparable_score_fields: list[str]
+) -> pd.DataFrame:
+    alpha_rows = []
+    for _, row in results_df.iterrows():
+        for field_name in comparable_score_fields:
+            alpha_row = {}
+            for model_prefix in model_prefixes:
+                column_name = f"{model_prefix}__{field_name}_score"
+                if column_name in results_df.columns:
+                    alpha_row[model_prefix] = row.get(column_name)
+            if len(alpha_row) >= 2:
+                alpha_rows.append(alpha_row)
+    return pd.DataFrame(alpha_rows)
 
 
 def calculate_nominal_krippendorff_alpha(ratings_df: pd.DataFrame) -> float | None:
@@ -303,51 +404,101 @@ def calculate_nominal_krippendorff_alpha(ratings_df: pd.DataFrame) -> float | No
 
 def validate_step_4_input_columns(
     uploaded_df: pd.DataFrame,
-) -> tuple[list[str], list[str], list[str]]:
+) -> tuple[list[str], list[str], list[str], list[str]]:
     required_base_columns = ["row_id", "context", "content"]
     missing_columns = [
         column for column in required_base_columns if column not in uploaded_df.columns
     ]
 
-    score_prefixes = {
-        column[: -len("_score")]
-        for column in uploaded_df.columns
-        if column.endswith("_score")
-    }
-    reasoning_prefixes = {
-        column[: -len("_reasoning")]
-        for column in uploaded_df.columns
-        if column.endswith("_reasoning")
-    }
-    error_prefixes = {
-        column[: -len("_error")]
-        for column in uploaded_df.columns
-        if column.endswith("_error")
-    }
+    model_fields: dict[str, set[str]] = {}
+    for column in uploaded_df.columns:
+        if "__" not in column:
+            continue
+        model_prefix, field_name = column.split("__", 1)
+        if not model_prefix or not field_name:
+            continue
+        model_fields.setdefault(model_prefix, set()).add(field_name)
 
-    model_prefixes = sorted(score_prefixes | reasoning_prefixes | error_prefixes)
+    if not model_fields:
+        score_prefixes = {
+            column[: -len("_score")]
+            for column in uploaded_df.columns
+            if column.endswith("_score")
+        }
+        reasoning_prefixes = {
+            column[: -len("_reasoning")]
+            for column in uploaded_df.columns
+            if column.endswith("_reasoning")
+        }
+        error_prefixes = {
+            column[: -len("_error")]
+            for column in uploaded_df.columns
+            if column.endswith("_error")
+        }
+        model_prefixes = sorted(score_prefixes | reasoning_prefixes | error_prefixes)
+        if len(model_prefixes) < 2:
+            missing_columns.append(
+                "At least two model output sets using legacy <model>_score columns or new <model>__<field> columns"
+            )
+        for prefix in model_prefixes:
+            for suffix in ("_score", "_reasoning", "_error"):
+                column_name = f"{prefix}{suffix}"
+                if column_name not in uploaded_df.columns:
+                    missing_columns.append(column_name)
+
+        score_columns = [
+            f"{prefix}_score" for prefix in model_prefixes if f"{prefix}_score" in uploaded_df.columns
+        ]
+        supporting_columns = []
+        supporting_columns.extend(
+            f"{prefix}_reasoning"
+            for prefix in model_prefixes
+            if f"{prefix}_reasoning" in uploaded_df.columns
+        )
+        supporting_columns.extend(
+            f"{prefix}_error" for prefix in model_prefixes if f"{prefix}_error" in uploaded_df.columns
+        )
+        return missing_columns, score_columns, supporting_columns, model_prefixes
+
+    model_prefixes = sorted(model_fields)
     if len(model_prefixes) < 2:
         missing_columns.append(
-            "At least two model output sets: <model>_score, <model>_reasoning, <model>_error"
+            "At least two model output sets using <model>__<field> columns"
         )
 
     for prefix in model_prefixes:
-        for suffix in ("_score", "_reasoning", "_error"):
-            column_name = f"{prefix}{suffix}"
-            if column_name not in uploaded_df.columns:
-                missing_columns.append(column_name)
+        if "error" not in model_fields.get(prefix, set()):
+            missing_columns.append(f"{prefix}__error")
 
-    score_columns = [f"{prefix}_score" for prefix in model_prefixes if f"{prefix}_score" in uploaded_df.columns]
-    reasoning_columns = [
-        f"{prefix}_reasoning"
+    comparable_score_fields, aggregate_fields = collect_model_metric_sets(model_fields)
+    if not comparable_score_fields:
+        missing_columns.append(
+            'At least one shared "<dimension>_score" + "<dimension>_reasoning" pair across models'
+        )
+
+    score_columns = [
+        f"{prefix}__{field_name}_score"
+        for field_name in comparable_score_fields
         for prefix in model_prefixes
-        if f"{prefix}_reasoning" in uploaded_df.columns
+        if f"{prefix}__{field_name}_score" in uploaded_df.columns
     ]
-    error_columns = [
-        f"{prefix}_error" for prefix in model_prefixes if f"{prefix}_error" in uploaded_df.columns
+    supporting_columns = [
+        f"{prefix}__{field_name}_reasoning"
+        for field_name in comparable_score_fields
+        for prefix in model_prefixes
+        if f"{prefix}__{field_name}_reasoning" in uploaded_df.columns
     ]
+    supporting_columns.extend(
+        f"{prefix}__{field_name}"
+        for field_name in aggregate_fields
+        for prefix in model_prefixes
+        if f"{prefix}__{field_name}" in uploaded_df.columns
+    )
+    supporting_columns.extend(
+        f"{prefix}__error" for prefix in model_prefixes if f"{prefix}__error" in uploaded_df.columns
+    )
 
-    return missing_columns, score_columns, reasoning_columns + error_columns
+    return missing_columns, score_columns, supporting_columns, model_prefixes
 
 
 def build_step_4_disagreement_subset(
@@ -467,12 +618,24 @@ def validate_judge_output(parsed_output: dict) -> dict:
     return parsed_output
 
 
+def invalidate_step_1_state() -> None:
+    st.session_state["customerbot_step_1_saved"] = False
+    st.session_state["customerbot_step_3_results"] = None
+
+
+def invalidate_step_2_state() -> None:
+    st.session_state["customerbot_step_2_saved"] = False
+    st.session_state["customerbot_step_3_results"] = None
+
+
 st.set_page_config(page_title="Customerbot", layout="wide")
 
 if "customerbot_step_1_saved" not in st.session_state:
     st.session_state["customerbot_step_1_saved"] = False
 if "customerbot_step_2_saved" not in st.session_state:
     st.session_state["customerbot_step_2_saved"] = False
+if "customerbot_step_3_results" not in st.session_state:
+    st.session_state["customerbot_step_3_results"] = None
 
 st.title("Customerbot")
 st.caption("Run the same prompt against three language models in parallel.")
@@ -488,7 +651,7 @@ with parameter_columns[0]:
         MODEL_OPTIONS,
         index=MODEL_OPTIONS.index(DEFAULT_MODELS[0]),
         key="customerbot_primary_model",
-        on_change=lambda: st.session_state.__setitem__("customerbot_step_1_saved", False),
+        on_change=invalidate_step_1_state,
     )
 with parameter_columns[1]:
     secondary_model = st.selectbox(
@@ -496,7 +659,7 @@ with parameter_columns[1]:
         MODEL_OPTIONS,
         index=MODEL_OPTIONS.index(DEFAULT_MODELS[1]),
         key="customerbot_secondary_model",
-        on_change=lambda: st.session_state.__setitem__("customerbot_step_1_saved", False),
+        on_change=invalidate_step_1_state,
     )
 
 upload_columns = st.columns(2)
@@ -504,7 +667,7 @@ with upload_columns[0]:
     uploaded_data = st.file_uploader(
         "Upload data (CSV)",
         type=["csv"],
-        on_change=lambda: st.session_state.__setitem__("customerbot_step_1_saved", False),
+        on_change=invalidate_step_1_state,
     )
 with upload_columns[1]:
     temperature = st.slider(
@@ -513,7 +676,7 @@ with upload_columns[1]:
         max_value=2.0,
         value=0.0,
         step=0.1,
-        on_change=lambda: st.session_state.__setitem__("customerbot_step_1_saved", False),
+        on_change=invalidate_step_1_state,
     )
 
 if uploaded_data is not None:
@@ -545,43 +708,43 @@ role_prompt = st.text_area(
     "Role",
     value=DEFAULT_ROLE,
     height=90,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 task_prompt = st.text_area(
     "Task",
     value=DEFAULT_TASK,
     height=100,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 construct_definition = st.text_area(
     "Construct Definition",
     value=DEFAULT_CONSTRUCT_DEFINITION,
     height=100,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 inclusion_criteria = st.text_area(
     "Inclusion Criteria",
     value=DEFAULT_INCLUSION_CRITERIA,
     height=100,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 exclusion_criteria = st.text_area(
     "Exclusion Criteria",
     value=DEFAULT_EXCLUSION_CRITERIA,
     height=100,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 constraints_prompt = st.text_area(
     "Constraints",
     value=DEFAULT_CONSTRAINTS,
     height=120,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 examples_prompt = st.text_area(
     "Examples",
     value=DEFAULT_EXAMPLES,
     height=120,
-    on_change=lambda: st.session_state.__setitem__("customerbot_step_2_saved", False),
+    on_change=invalidate_step_2_state,
 )
 
 save_step_2 = st.button("Save", key="customerbot_save_step_2")
@@ -627,7 +790,7 @@ if run_generation:
             )
 
             row_user_prompt = (
-                "Use the following fields from the uploaded CSV row to rate clarity.\n\n"
+                "Use the following fields from the uploaded CSV row to produce the requested ratings.\n\n"
                 f"context:\n{context_value or '[empty]'}\n\n"
                 f"content:\n{content_value or '[empty]'}"
             )
@@ -660,85 +823,115 @@ if run_generation:
                 for future in as_completed(future_map):
                     row_id, model = future_map[future]
                     result = future.result()
-                    score_value, reasoning_value = extract_score_and_reasoning(
-                        result["content"]
+                    result["parsed_output"] = normalize_output_payload(
+                        extract_structured_result(result["content"])
                     )
-                    result["score"] = score_value
-                    result["reasoning"] = reasoning_value
                     scored_outputs[(row_id, model)] = result
+
+        model_prefix_map = {
+            model: build_model_column_prefix(model) for model in selected_models
+        }
+        model_fields = {
+            model: {
+                field_name
+                for row_id in [row["row_id"] for row in dataset_rows]
+                for field_name in scored_outputs[(row_id, model)]["parsed_output"].keys()
+            }
+            for model in selected_models
+        }
+        comparable_score_fields, aggregate_fields = collect_model_metric_sets(model_fields)
 
         records = []
         for row_data in dataset_rows:
             row_id = row_data["row_id"]
-            primary_result = scored_outputs[(row_id, primary_model)]
-            secondary_result = scored_outputs[(row_id, secondary_model)]
-            primary_score = normalize_likert_score(primary_result["score"])
-            secondary_score = normalize_likert_score(secondary_result["score"])
-            records.append(
-                {
-                    "row_id": row_id,
-                    "context": row_data["context"],
-                    "content": row_data["content"],
-                    f"{primary_model}_score": primary_score,
-                    f"{primary_model}_reasoning": primary_result["reasoning"],
-                    f"{secondary_model}_score": secondary_score,
-                    f"{secondary_model}_reasoning": secondary_result["reasoning"],
-                    f"{primary_model}_error": primary_result["error"],
-                    f"{secondary_model}_error": secondary_result["error"],
+            record = {
+                "row_id": row_id,
+                "context": row_data["context"],
+                "content": row_data["content"],
+            }
+            for model in selected_models:
+                model_prefix = model_prefix_map[model]
+                model_result = scored_outputs[(row_id, model)]
+                parsed_output = model_result["parsed_output"]
+                paired_dimension_fields = {
+                    f"{field_name}_score" for field_name in comparable_score_fields
+                } | {
+                    f"{field_name}_reasoning" for field_name in comparable_score_fields
                 }
-            )
+
+                for field_name, field_value in parsed_output.items():
+                    column_name = f"{model_prefix}__{field_name}"
+                    if field_name in paired_dimension_fields and field_name.endswith("_score"):
+                        record[column_name] = normalize_likert_score(field_value)
+                    elif field_name.endswith("_reasoning"):
+                        record[column_name] = normalize_cell_value(field_value)
+                    else:
+                        record[column_name] = field_value
+
+                record[f"{model_prefix}__error"] = model_result["error"]
+
+            records.append(record)
 
         results_df = pd.DataFrame(records)
-        score_columns = [f"{primary_model}_score", f"{secondary_model}_score"]
-        paired_scores_df = results_df[score_columns].dropna()
-        alpha = calculate_nominal_krippendorff_alpha(paired_scores_df)
+        alpha_input_df = build_alpha_input_dataframe(
+            results_df,
+            [model_prefix_map[model] for model in selected_models],
+            comparable_score_fields,
+        ).dropna()
+        alpha = calculate_nominal_krippendorff_alpha(alpha_input_df)
 
         summary_df = pd.DataFrame(
             [
                 {
                     "model": model,
+                    "model_column_prefix": model_prefix_map[model],
                     "rows_scored": len(dataset_rows),
                     "successful_scores": sum(
                         1
                         for row_id in results_df["row_id"]
                         if not scored_outputs[(row_id, model)]["error"]
                     ),
+                    "scored_dimensions": len(comparable_score_fields),
                     "average_duration_seconds": round(
                         sum(scored_outputs[(row_id, model)]["duration_seconds"] for row_id in results_df["row_id"])
                         / max(len(dataset_rows), 1),
                         2,
                     ),
-                    "average_score": round(
-                        results_df[f"{model}_score"].dropna().mean(),
+                    "average_score_across_dimensions": round(
+                        pd.concat(
+                            [
+                                results_df[f"{model_prefix_map[model]}__{field_name}_score"].dropna()
+                                for field_name in comparable_score_fields
+                                if f"{model_prefix_map[model]}__{field_name}_score" in results_df.columns
+                            ],
+                            ignore_index=True,
+                        ).mean(),
                         2,
                     )
-                    if not results_df[f"{model}_score"].dropna().empty
+                    if comparable_score_fields
                     else None,
-                    "median_score": float(results_df[f"{model}_score"].dropna().median())
-                    if not results_df[f"{model}_score"].dropna().empty
+                    "median_score_across_dimensions": float(
+                        pd.concat(
+                            [
+                                results_df[f"{model_prefix_map[model]}__{field_name}_score"].dropna()
+                                for field_name in comparable_score_fields
+                                if f"{model_prefix_map[model]}__{field_name}_score" in results_df.columns
+                            ],
+                            ignore_index=True,
+                        ).median()
+                    )
+                    if comparable_score_fields
                     else None,
                 }
                 for model in selected_models
             ]
         )
-        st.subheader("Run Summary")
-        st.dataframe(summary_df, use_container_width=True)
 
-        st.subheader("Scored Dataset")
-        st.dataframe(results_df, use_container_width=True)
-        st.subheader("Preview")
-        st.dataframe(results_df.head(10), use_container_width=True)
-
-        st.metric(
-            "Krippendorff's Alpha",
-            "N/A" if alpha is None else f"{alpha:.4f}",
+        error_count = int(
+            results_df[f"{model_prefix_map[primary_model]}__error"].astype(bool).sum()
+        ) + int(
+            results_df[f"{model_prefix_map[secondary_model]}__error"].astype(bool).sum()
         )
-
-        error_count = int(results_df[f"{primary_model}_error"].astype(bool).sum()) + int(
-            results_df[f"{secondary_model}_error"].astype(bool).sum()
-        )
-        if error_count:
-            st.warning(f"{error_count} model scoring calls returned errors.")
 
         export_payload = {
             "system_prompt": system_prompt.strip(),
@@ -753,20 +946,49 @@ if run_generation:
             },
             "temperature": temperature,
             "krippendorff_alpha": alpha,
+            "model_column_prefixes": model_prefix_map,
+            "scored_dimensions": comparable_score_fields,
+            "aggregate_fields": aggregate_fields,
             "results": records,
         }
-        st.download_button(
-            "Download Results JSON",
-            data=json.dumps(export_payload, indent=2),
-            file_name="customerbot-results.json",
-            mime="application/json",
-        )
-        st.download_button(
-            "Download Results CSV",
-            data=results_df.to_csv(index=False),
-            file_name="customerbot-results.csv",
-            mime="text/csv",
-        )
+        st.session_state["customerbot_step_3_results"] = {
+            "summary_df": summary_df,
+            "results_df": results_df,
+            "alpha": alpha,
+            "error_count": error_count,
+            "export_payload": export_payload,
+        }
+
+step_3_results = st.session_state.get("customerbot_step_3_results")
+if step_3_results:
+    st.subheader("Run Summary")
+    st.dataframe(step_3_results["summary_df"], use_container_width=True)
+
+    st.subheader("Scored Dataset")
+    st.dataframe(step_3_results["results_df"], use_container_width=True)
+    st.subheader("Preview")
+    st.dataframe(step_3_results["results_df"].head(10), use_container_width=True)
+
+    st.metric(
+        "Krippendorff's Alpha",
+        "N/A" if step_3_results["alpha"] is None else f"{step_3_results['alpha']:.4f}",
+    )
+
+    if step_3_results["error_count"]:
+        st.warning(f"{step_3_results['error_count']} model scoring calls returned errors.")
+
+    st.download_button(
+        "Download Results JSON",
+        data=json.dumps(step_3_results["export_payload"], indent=2),
+        file_name="customerbot-results.json",
+        mime="application/json",
+    )
+    st.download_button(
+        "Download Results CSV",
+        data=step_3_results["results_df"].to_csv(index=False),
+        file_name="customerbot-results.csv",
+        mime="text/csv",
+    )
 
 st.subheader("Step 4: Optimize Reasoning")
 judge_model = st.selectbox(
@@ -796,6 +1018,7 @@ with step_4_columns[1]:
 step_4_df = None
 step_4_score_columns: list[str] = []
 step_4_supporting_columns: list[str] = []
+step_4_model_prefixes: list[str] = []
 step_4_disagreement_df = pd.DataFrame()
 
 if uploaded_judge_data is not None:
@@ -808,6 +1031,7 @@ if uploaded_judge_data is not None:
             step_4_missing_columns,
             step_4_score_columns,
             step_4_supporting_columns,
+            step_4_model_prefixes,
         ) = validate_step_4_input_columns(step_4_df)
         if step_4_missing_columns:
             step_4_df = None
@@ -823,6 +1047,7 @@ if uploaded_judge_data is not None:
                 "Detected Step 3 output columns: "
                 + ", ".join(["row_id", "context", "content"] + step_4_score_columns + step_4_supporting_columns)
             )
+            st.caption("Detected model output groups: " + ", ".join(step_4_model_prefixes))
             st.caption(
                 f"Disagreement rows available for Step 4 judge review: {len(step_4_disagreement_df)} of {len(step_4_df)}"
             )
