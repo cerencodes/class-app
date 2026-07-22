@@ -266,24 +266,24 @@ if uploaded_file is not None:
                         "new_dale_chall": "{:.2f}",
                     }
                 )
-                .applymap(
+                .map(
                     lambda v: color_good(v, 70, "le"),
                     subset=["flesch_reading_ease"],
                 )
-                .applymap(
+                .map(
                     lambda v: color_good(v, 9, "le"),
                     subset=["flesch_kincaid_grade"],
                 )
-                .applymap(
+                .map(
                     lambda v: color_good(v, 8, "le"),
                     subset=["gunning_fog_index"],
                 )
-                .applymap(
+                .map(
                     lambda v: color_good(v, 9, "le"),
                     subset=["smog_index"],
                 )
-                .applymap(lambda v: color_good(v, 8, "le"), subset=["ari"])
-                .applymap(
+                .map(lambda v: color_good(v, 8, "le"), subset=["ari"])
+                .map(
                     lambda v: color_good(v, 7, "le"),
                     subset=["new_dale_chall"],
                 )

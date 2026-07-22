@@ -1195,13 +1195,13 @@ if step_3_results:
         styled_qwk_df = (
             step_3_results["qwk_table_df"]
             .style.format({"quadratic_weighted_kappa": "{:.4f}"})
-            .applymap(
+            .map(
                 lambda value: "color: green; font-weight: 600;"
                 if value is True
                 else "",
                 subset=["meets_threshold"],
             )
-            .applymap(
+            .map(
                 lambda value: "color: green; font-weight: 600;"
                 if isinstance(value, (int, float)) and value >= 0.6
                 else "",
