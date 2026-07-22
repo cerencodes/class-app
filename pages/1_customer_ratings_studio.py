@@ -17,8 +17,8 @@ from openrouter_utils import timed_openrouter_chat_completion
 
 DEFAULT_MODELS = [
     "openai/gpt-4o-mini",
-    "google/gemini-2.0-flash-001",
-    "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash",
+    "anthropic/claude-sonnet-4.6",
 ]
 
 MODEL_OPTIONS = [
@@ -41,12 +41,11 @@ MODEL_OPTIONS = [
 ]
 
 DEFAULT_CONSTRUCT_DEFINITION = (
-    "Empathy is the degree to which the chatbot response demonstrates social "
-    "perspective-taking and understanding of the customer's motivations and "
-    "feelings, and uses that understanding to provide reassurance and personalized "
-    "help.\n\n"
-    'Likert 5-point scale (agreement with statement: "This response is empathetic '
-    'for this persona/customer.")\n'
+    "The construct you are rating should be defined here in plain language. "
+    "Describe what a strong response looks like, what a weak response looks "
+    "like, and how the 5-point scale should be interpreted.\n\n"
+    'Likert 5-point scale (agreement with statement: "This response matches the '
+    'defined construct for this case.")\n'
     "1 = Strongly disagree\n"
     "2 = Disagree\n"
     "3 = Neither agree nor disagree\n"
@@ -54,63 +53,122 @@ DEFAULT_CONSTRUCT_DEFINITION = (
     "5 = Strongly agree"
 )
 DEFAULT_ROLE = (
-    "Recreational rider. Moderate biking knowledge. Wants clear, simple, "
-    "reassuring guidance. Low tolerance for jargon unless explained. Prefers "
-    "step-by-step and practical recommendations."
+    "You are a service quality evaluation expert. You are assessing sales "
+    "support provided by the supporter to the customer."
 )
 DEFAULT_TASK = (
-    "You will rate aspects (specified in Construct Definition) of a support "
-    "chatbot response from the perspective of a specified rider persona on "
-    "5-point Likert scale."
+    "Refer to the context and rate content based on the items specified in "
+    "Construct Definition. Rate each item on a 5-point Likert scale."
 )
 DEFAULT_INCLUSION_CRITERIA = (
-    "Increase empathy when the response:\n"
-    "- Is reassuring\n"
-    "- Adopts the customer's point of view to consider the problem\n"
-    "- Understands individual needs of the customer\n"
-    "- Gives tailored options rather than one-size-fits-all to meet the individual "
-    "needs of the customer\n"
-    "- Discovers customer's personalized demands in time"
+    "individualized_attention includes:\n"
+    "- Explicit references to customer's specific use case, preferences or needs\n"
+    "caring_tone includes:\n"
+    "- Explict use of reassuring vocabulary when the context contains emotional "
+    "load such as pain, discomfort, frustration\n"
+    "customer_first_orientation includes:\n"
+    "- Appearance of product details and customer's requirements together\n"
+    "need_understanding\n"
+    "- Explicit acknowledgement of the need, preference or problem"
 )
 DEFAULT_EXCLUSION_CRITERIA = (
-    "Decrease empathy when the response:\n"
-    "- Is generic (same answer could fit any customer) without linking to the "
-    "customer's stated needs\n"
-    "- Ignores expressed discomfort, constraints, or goals\n"
-    "- Provides no personalization\n"
-    "- Has a non-reassuring tone (is cold, dismissive or salesy)\n"
-    "- Uses \"efficiency-only\" behavior (is standardized, lacking elaboration "
-    "where needed)"
+    "Do not penalize individualized_attention if:\n"
+    "- The context does not have any details on the customer's specific use "
+    "case, preferences or needs\n"
+    "Do not penalize caring_tone if:\n"
+    "- The context does not carry emotional load\n"
+    "Do not penalize customer_first_orientation if:\n"
+    "- The context does not have any details on the customer's specific use "
+    "case, preferences or needs\n"
+    "Do not penalize need_understanding if:\n"
+    "- The context does not have any details on the customer's specific use "
+    "case, preferences or needs"
 )
 DEFAULT_CONSTRAINTS = (
-    "- return a flat JSON object only\n"
-    '- for each scored dimension, use keys named "<dimension>_score" and "<dimension>_reasoning"\n'
-    "- each *_score value must be an integer from 1 to 5\n"
-    "- each *_reasoning value must be 1-2 short sentences\n"
-    "- optional aggregate fields are allowed (for example average_empathy_score)\n"
-    "- output valid JSON only\n"
-    "- do not return markdown, code fences, or extra text"
+    "- Do not calculate average_empathy_score yourself.\n"
+    "- Item Scores: integers 1-5\n"
+    "- Item Reasoning: 1-2 short sentences per item\n"
+    "- Output: valid JSON only, no markdown or extra text"
 )
 DEFAULT_EXAMPLES = (
-    "Example output:\n"
-    '{\n'
-    '  "individual_attention_score": 2,\n'
-    '  "individual_attention_reasoning": "Some viewpoint alignment but weak personalization.",\n'
-    '  "caring_tone_score": 3,\n'
-    '  "caring_tone_reasoning": "The tone is somewhat reassuring but not especially warm.",\n'
-    '  "average_empathy_score": 2.5\n'
+    "Examples:\n"
+    '{  "examples": [\n'
+    '    {\n'
+    '      "item": "individual_attention",\n'
+    '      "definition": "The brand employees give customers individual attention",\n'
+    '      "example": {\n'
+    '        "context": "I\'ll be riding in Whistler and the forecast says it might be rainy. What do you recommend?",\n'
+    '        "content": "This grip has an aggressive finger traction pattern and ribbed palm that adds extra surface for you to hold on better."\n'
+    '      },\n'
+    '      "annotation": {\n'
+    '        "what_happened": "The supporter fulfills the customer\'s informational need, but it is overly focused on listing the product specs instead of tying them back to the customer\'s intent. It appears like a generic sales pitch and lacks a personalized feel.",\n'
+    '        "more_empathic_alternative": "This grip has an aggressive finger traction pattern designed to make you hold on better when wet. The ribbed palm adds extra surface for stronger grip. These features will help safer riding under rainy conditions in Whistler.",\n'
+    '        "why_more_empathic": "This approach highlights product features while acknowledging the customer\'s specific use case. This makes the customer feel they are getting personalized recommendations."\n'
+    '      }\n'
+    '    },\n'
+    '    {\n'
+    '      "item": "caring_fashion",\n'
+    '      "definition": "The brand employees deal with customers in a caring fashion",\n'
+    '      "example": {\n'
+    '        "context": "I\'m looking for grips that are durable. I don\'t want to spend too much money.",\n'
+    '        "content": "This is a durable grip. It is also at an affordable price point at $12.99."\n'
+    '      },\n'
+    '      "annotation": {\n'
+    '        "what_happened": "The supporter fulfills the customer\'s informational need, but is too direct and brief. This makes it appear uncaring and dismissive.",\n'
+    '        "more_empathic_alternative": "Sure, I can help you find durable grips that are affordable at the same time.",\n'
+    '        "why_more_empathic": "This approach fulfills the customer\'s informational need while also ensuring the customer knows they have the attention of the support rep."\n'
+    '      }\n'
+    '    },\n'
+    '    {\n'
+    '      "item": "best_interest_at_heart",\n'
+    '      "definition": "The brand employees have the customer best interest at heart",\n'
+    '      "example": {\n'
+    '        "context": "Large grips are too bulky and they make me frustrated. But I have large hands, what can I do?",\n'
+    '        "content": "This is a slim grip that suits large hands and offers padding without being bulky."\n'
+    '      },\n'
+    '      "annotation": {\n'
+    '        "what_happened": "The supporter fulfills the customer\'s informational need and addresses their individual requirements, but it does not establish a personal connection. The customer asks an emotionally loaded question, expressing frustration, but the support does not acknowledge the emotion. It makes it look like support is prioritizing a sale rather than the customer\'s comfort.",\n'
+    '        "more_empathic_alternative": "I understand bulkiness can be frustrating. Here is a slimmer alternative that offers high damping, and balances comfort and traction. This hybrid design helps keep riding enjoyable and comfortable for larger hands.",\n'
+    '        "why_more_empathic": "This approach highlights product features while acknowledging the customer\'s emotional state and preferences. This makes the customer feel reassured that the support has their best interest at heart."\n'
+    '      }\n'
+    '    },\n'
+    '    {\n'
+    '      "item": "understand_customer_needs",\n'
+    '      "definition": "The brand employees understand the needs of their customers",\n'
+    '      "example": {\n'
+    '        "context": "My hands hurt after a while with my current grips.",\n'
+    '        "content": "This grip has thick padding."\n'
+    '      },\n'
+    '      "annotation": {\n'
+    '        "what_happened": "The supporter makes a recommendation with a relevant feature, but it does not acknowledge the customer\'s specific need. This shows a lack of insight and understanding, looking like a generic RAG response.",\n'
+    '        "more_empathic_alternative": "I understand you may need extra padding. This grip has a high damping level, which means thicker padding to reduce hand pain. This grip addresses your hand pain concern with a medium diameter and hybrid offset design that provides extra padding on the palm side, where you\'re experiencing discomfort between the thumb and pointer.",\n'
+    '        "why_more_empathic": "This approach highlights product features while acknowledging the customer\'s specific need and how the product feature relates to the need. This indicates insight and initiative."\n'
+    '      }\n'
+    '    }\n'
+    '  ]\n'
     '}'
 )
 BLANK_PROMPT_VALUE = ""
 DEFAULT_JUDGE_CONSTRUCT_DEFINITION = (
-    "Use the original construct definition and scoring rubric being audited as "
-    "context. Treat it as the target instrument whose wording, thresholds, and "
-    "examples may need refinement to reduce disagreement between raters."
+    "Empathy is the degree to which the response makes the customer feel "
+    "understood, cared for, and personally helped through its wording and "
+    "tailoring.\n\n"
+    "Empathy is composed of the below items:\n"
+    "- individual_attention: The response refers to the customer's specific "
+    "situation, constraints, or use case rather than giving a generic answer.\n"
+    "- caring_tone: The response uses a supportive, reassuring, non-dismissive "
+    "tone and acknowledges any discomfort, worry, or frustration expressed by "
+    "the customer.\n"
+    "- customer_first_orientation: The response prioritizes the customer's "
+    "comfort, safety, fit, or stated goals rather than sounding salesy, "
+    "scripted, or product-first.\n"
+    "- need_understanding: The response accurately identifies the customer's "
+    "stated need or problem and explains how the recommendation addresses it."
 )
 DEFAULT_JUDGE_ROLE = (
     "You are a measurement-audit judge. You do not score the item yourself. "
     "You analyze disagreements between raters and recommend edits to the "
-    "rating instrument to improve Krippendorff's alpha."
+    "rating instrument to improve quadratic weighted kappa."
 )
 DEFAULT_JUDGE_TASK = (
     "- Understand the construct definition text.\n"
@@ -143,9 +201,9 @@ DEFAULT_JUDGE_CONSTRAINTS = (
 )
 DEFAULT_JUDGE_EXAMPLES = (
     "Example recommendations:\n"
-    "- Clarify that clarity should be judged independently from correctness\n"
-    "- Define \"too vague\" as using placeholders without naming a concrete recommendation\n"
-    "- Add an edge-case example where a response is concise but still unclear"
+    "- Clarify the edge cases where a response is short but still complete\n"
+    "- Define what counts as too vague versus appropriately concise\n"
+    "- Add an example showing a borderline score and why it belongs there"
 )
 
 
@@ -350,6 +408,54 @@ def build_alpha_input_dataframe(
     return pd.DataFrame(alpha_rows)
 
 
+def normalize_numeric_rating(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def build_qwk_input_dataframe(
+    results_df: pd.DataFrame, model_prefixes: list[str], comparable_score_fields: list[str]
+) -> pd.DataFrame:
+    qwk_rows = []
+    for _, row in results_df.iterrows():
+        for field_name in comparable_score_fields:
+            qwk_row = {}
+            for model_prefix in model_prefixes:
+                column_name = f"{model_prefix}__{field_name}_score"
+                if column_name in results_df.columns:
+                    qwk_row[model_prefix] = row.get(column_name)
+            if len(qwk_row) >= 2:
+                qwk_rows.append(qwk_row)
+    return pd.DataFrame(qwk_rows)
+
+
+def build_field_qwk_frame(
+    results_df: pd.DataFrame, model_prefixes: list[str], field_name: str
+) -> pd.DataFrame:
+    qwk_rows = []
+    for _, row in results_df.iterrows():
+        qwk_row = {}
+        for model_prefix in model_prefixes:
+            column_name = f"{model_prefix}__{field_name}_score"
+            if column_name in results_df.columns:
+                qwk_row[model_prefix] = row.get(column_name)
+        if len(qwk_row) >= 2:
+            qwk_rows.append(qwk_row)
+    return pd.DataFrame(qwk_rows)
+
+
 def calculate_nominal_krippendorff_alpha(ratings_df: pd.DataFrame) -> float | None:
     pair_counts: dict[tuple[str, str], int] = {}
     value_counts: dict[str, int] = {}
@@ -400,6 +506,63 @@ def calculate_nominal_krippendorff_alpha(ratings_df: pd.DataFrame) -> float | No
         return 1.0 if math.isclose(observed_disagreement, 0.0) else None
 
     return 1 - (observed_disagreement / expected_disagreement)
+
+
+def calculate_quadratic_weighted_kappa(ratings_df: pd.DataFrame) -> float | None:
+    normalized_rows = []
+    for _, row in ratings_df.iterrows():
+        values = [normalize_numeric_rating(value) for value in row.tolist()]
+        if any(value is None for value in values):
+            continue
+        if len(values) != 2:
+            continue
+        normalized_rows.append((values[0], values[1]))
+
+    if not normalized_rows:
+        return None
+
+    unique_values = sorted({value for pair in normalized_rows for value in pair})
+    if len(unique_values) <= 1:
+        return 1.0
+
+    value_to_index = {value: index for index, value in enumerate(unique_values)}
+    num_values = len(unique_values)
+
+    observed = [[0.0 for _ in range(num_values)] for _ in range(num_values)]
+    for left_rating, right_rating in normalized_rows:
+        observed[value_to_index[left_rating]][value_to_index[right_rating]] += 1.0
+
+    total = float(len(normalized_rows))
+    row_marginals = [sum(row) for row in observed]
+    col_marginals = [
+        sum(observed[row_index][col_index] for row_index in range(num_values))
+        for col_index in range(num_values)
+    ]
+
+    expected = [
+        [
+            (row_marginals[row_index] * col_marginals[col_index]) / total
+            for col_index in range(num_values)
+        ]
+        for row_index in range(num_values)
+    ]
+
+    denominator_base = float((num_values - 1) ** 2)
+    if math.isclose(denominator_base, 0.0):
+        return 1.0
+
+    observed_weighted = 0.0
+    expected_weighted = 0.0
+    for row_index in range(num_values):
+        for col_index in range(num_values):
+            weight = ((row_index - col_index) ** 2) / denominator_base
+            observed_weighted += weight * observed[row_index][col_index]
+            expected_weighted += weight * expected[row_index][col_index]
+
+    if math.isclose(expected_weighted, 0.0):
+        return 1.0 if math.isclose(observed_weighted, 0.0) else None
+
+    return 1 - (observed_weighted / expected_weighted)
 
 
 def validate_step_4_input_columns(
@@ -523,7 +686,7 @@ def build_step_4_disagreement_subset(
 def build_step_4_user_prompt(disagreement_df: pd.DataFrame) -> str:
     serialized_rows = disagreement_df.fillna("").to_dict(orient="records")
     return (
-        "Analyze the disagreement rows from the Step 3 output dataset. "
+        "Analyze the disagreement rows from the scored dataset. "
         "Identify why raters disagreed and recommend wording edits to the rating "
         "instrument.\n\n"
         f"Rows for analysis ({len(serialized_rows)}):\n"
@@ -628,7 +791,7 @@ def invalidate_step_2_state() -> None:
     st.session_state["customerbot_step_3_results"] = None
 
 
-st.set_page_config(page_title="Customerbot", layout="wide")
+st.set_page_config(page_title="Customer Ratings Studio", layout="wide")
 
 if "customerbot_step_1_saved" not in st.session_state:
     st.session_state["customerbot_step_1_saved"] = False
@@ -637,17 +800,20 @@ if "customerbot_step_2_saved" not in st.session_state:
 if "customerbot_step_3_results" not in st.session_state:
     st.session_state["customerbot_step_3_results"] = None
 
-st.title("Customerbot")
-st.caption("Run the same prompt against three language models in parallel.")
-st.subheader("OpenRouter API Key")
-st.caption("This API key is used by both Step 3 and Step 4.")
+st.title("Customer Ratings Studio")
+st.caption(
+    "Upload the Readability Evaluator output to simulate service quality ratings with LLMs."
+)
+st.subheader("API Key")
+st.caption("This API key powers both scoring and review.")
 openrouter_api_key = st.text_input("OpenRouter API Key", type="password")
 
-st.subheader("Step 1: Enter System Parameters")
+st.subheader("Step 1: Prepare the run")
+st.caption("Select the two LLMs that will rate the customer service transcript.")
 parameter_columns = st.columns(2)
 with parameter_columns[0]:
     primary_model = st.selectbox(
-        "Primary LLM Model",
+        "Primary rater",
         MODEL_OPTIONS,
         index=MODEL_OPTIONS.index(DEFAULT_MODELS[0]),
         key="customerbot_primary_model",
@@ -655,7 +821,7 @@ with parameter_columns[0]:
     )
 with parameter_columns[1]:
     secondary_model = st.selectbox(
-        "Secondary LLM Model",
+        "Secondary rater",
         MODEL_OPTIONS,
         index=MODEL_OPTIONS.index(DEFAULT_MODELS[1]),
         key="customerbot_secondary_model",
@@ -665,13 +831,13 @@ with parameter_columns[1]:
 upload_columns = st.columns(2)
 with upload_columns[0]:
     uploaded_data = st.file_uploader(
-        "Upload data (CSV)",
+        "Upload Readability Evaluator dataset (CSV)",
         type=["csv"],
         on_change=invalidate_step_1_state,
     )
 with upload_columns[1]:
     temperature = st.slider(
-        "Temperature",
+        "Rater temperature",
         min_value=0.0,
         max_value=2.0,
         value=0.0,
@@ -691,19 +857,20 @@ if uploaded_data is not None:
 else:
     input_df = None
 
-save_step_1 = st.button("Save", key="customerbot_save_step_1")
+save_step_1 = st.button("Save setup", key="customerbot_save_step_1")
 if save_step_1:
     if input_df is None:
         st.session_state["customerbot_step_1_saved"] = False
-        st.error("Upload a valid CSV file before saving Step 1.")
+        st.error("Upload a valid CSV file before saving the setup.")
     elif "context" not in input_df.columns or "content" not in input_df.columns:
         st.session_state["customerbot_step_1_saved"] = False
         st.error("Uploaded CSV must contain `context` and `content` columns.")
     else:
         st.session_state["customerbot_step_1_saved"] = True
-        st.success("Step 1 saved successfully.")
+        st.success("Setup saved successfully.")
 
-st.subheader("Step 2: Enter Prompt")
+st.subheader("Step 2: Define the rubric")
+st.caption("Enter detailed instructions for the rater LLMs.")
 role_prompt = st.text_area(
     "Role",
     value=DEFAULT_ROLE,
@@ -747,13 +914,14 @@ examples_prompt = st.text_area(
     on_change=invalidate_step_2_state,
 )
 
-save_step_2 = st.button("Save", key="customerbot_save_step_2")
+save_step_2 = st.button("Save rubric", key="customerbot_save_step_2")
 if save_step_2:
     st.session_state["customerbot_step_2_saved"] = True
-    st.success("Step 2 saved successfully.")
+    st.success("Rubric saved successfully.")
 
-st.subheader("Step 3: Generate Data")
-run_generation = st.button("Generate Synthetic Customer Data", type="primary")
+st.subheader("Step 3: Score the dataset")
+st.caption("Run the LLMs to rate the customer service responses based on the rubric you defined in Step 2.")
+run_generation = st.button("Run scoring", type="primary")
 
 if run_generation:
     if not openrouter_api_key:
@@ -763,9 +931,9 @@ if run_generation:
     elif input_df is None:
         st.error("Upload a valid CSV file.")
     elif not st.session_state["customerbot_step_1_saved"]:
-        st.error("Save Step 1 before generating data.")
+        st.error("Save the setup before running scoring.")
     elif not st.session_state["customerbot_step_2_saved"]:
-        st.error("Save Step 2 before generating data.")
+        st.error("Save the rubric before running scoring.")
     elif "context" not in input_df.columns or "content" not in input_df.columns:
         st.error("CSV must contain `context` and `content` columns.")
     elif not task_prompt.strip():
@@ -806,7 +974,7 @@ if run_generation:
                     }
                 )
 
-        with st.spinner("Scoring dataset rows with both models..."):
+        with st.spinner("Scoring dataset rows with both raters..."):
             scored_outputs: dict[tuple[int, str], dict] = {}
             max_workers = min(4, max(1, len(jobs)))
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -858,15 +1026,27 @@ if run_generation:
                 } | {
                     f"{field_name}_reasoning" for field_name in comparable_score_fields
                 }
+                score_values: list[float] = []
 
                 for field_name, field_value in parsed_output.items():
                     column_name = f"{model_prefix}__{field_name}"
                     if field_name in paired_dimension_fields and field_name.endswith("_score"):
-                        record[column_name] = normalize_likert_score(field_value)
+                        normalized_score = normalize_likert_score(field_value)
+                        record[column_name] = normalized_score
+                        if normalized_score is not None:
+                            score_values.append(float(normalized_score))
                     elif field_name.endswith("_reasoning"):
                         record[column_name] = normalize_cell_value(field_value)
                     else:
                         record[column_name] = field_value
+
+                if score_values and len(score_values) == len(comparable_score_fields):
+                    record[f"{model_prefix}__average_empathy_score"] = round(
+                        sum(score_values) / len(score_values),
+                        2,
+                    )
+                else:
+                    record.setdefault(f"{model_prefix}__average_empathy_score", None)
 
                 record[f"{model_prefix}__error"] = model_result["error"]
 
@@ -879,6 +1059,31 @@ if run_generation:
             comparable_score_fields,
         ).dropna()
         alpha = calculate_nominal_krippendorff_alpha(alpha_input_df)
+        qwk_input_df = build_qwk_input_dataframe(
+            results_df,
+            [model_prefix_map[model] for model in selected_models],
+            comparable_score_fields,
+        ).dropna()
+        qwk = calculate_quadratic_weighted_kappa(qwk_input_df)
+        qwk_records = []
+        for field_name in comparable_score_fields:
+            field_qwk_df = build_field_qwk_frame(
+                results_df,
+                [model_prefix_map[model] for model in selected_models],
+                field_name,
+            ).dropna()
+            field_qwk = calculate_quadratic_weighted_kappa(field_qwk_df)
+            qwk_records.append(
+                {
+                    "dimension": field_name,
+                    "pairable_rows": int(len(field_qwk_df)),
+                    "quadratic_weighted_kappa": None if field_qwk is None else round(field_qwk, 4),
+                    "meets_threshold": (
+                        field_qwk is not None and field_qwk >= 0.6
+                    ),
+                }
+            )
+        qwk_table_df = pd.DataFrame(qwk_records)
 
         summary_df = pd.DataFrame(
             [
@@ -946,6 +1151,8 @@ if run_generation:
             },
             "temperature": temperature,
             "krippendorff_alpha": alpha,
+            "quadratic_weighted_kappa": qwk,
+            "quadratic_weighted_kappa_by_dimension": qwk_records,
             "model_column_prefixes": model_prefix_map,
             "scored_dimensions": comparable_score_fields,
             "aggregate_fields": aggregate_fields,
@@ -955,16 +1162,18 @@ if run_generation:
             "summary_df": summary_df,
             "results_df": results_df,
             "alpha": alpha,
+            "qwk": qwk,
+            "qwk_table_df": qwk_table_df,
             "error_count": error_count,
             "export_payload": export_payload,
         }
 
 step_3_results = st.session_state.get("customerbot_step_3_results")
 if step_3_results:
-    st.subheader("Run Summary")
+    st.subheader("Run Overview")
     st.dataframe(step_3_results["summary_df"], use_container_width=True)
 
-    st.subheader("Scored Dataset")
+    st.subheader("Scored Rows")
     st.dataframe(step_3_results["results_df"], use_container_width=True)
     st.subheader("Preview")
     st.dataframe(step_3_results["results_df"].head(10), use_container_width=True)
@@ -973,35 +1182,81 @@ if step_3_results:
         "Krippendorff's Alpha",
         "N/A" if step_3_results["alpha"] is None else f"{step_3_results['alpha']:.4f}",
     )
+    st.metric(
+        "Quadratic Weighted Kappa",
+        "N/A" if step_3_results["qwk"] is None else f"{step_3_results['qwk']:.4f}",
+    )
+
+    st.subheader("Per-Dimension QWK")
+    if not step_3_results["qwk_table_df"].empty:
+        styled_qwk_df = (
+            step_3_results["qwk_table_df"]
+            .style.format({"quadratic_weighted_kappa": "{:.4f}"})
+            .applymap(
+                lambda value: "color: green; font-weight: 600;"
+                if value is True
+                else "",
+                subset=["meets_threshold"],
+            )
+            .applymap(
+                lambda value: "color: green; font-weight: 600;"
+                if isinstance(value, (int, float)) and value >= 0.6
+                else "",
+                subset=["quadratic_weighted_kappa"],
+            )
+        )
+        st.dataframe(styled_qwk_df, use_container_width=True)
+    else:
+        st.info("No shared scored dimensions were found for QWK calculation.")
+
+    with st.expander("How to interpret these agreement metrics"):
+        st.markdown(
+            """
+            - **Krippendorff's Alpha:**
+              Measures how consistently the two raters assign scores across the
+              dataset, accounting for agreement that could happen by chance.
+              Values closer to `1.0` indicate stronger agreement. There is no
+              hard threshold in this app, but higher is better.
+            - **Quadratic Weighted Kappa (QWK):**
+              Measures how closely the two raters agree on each ordinal score,
+              while giving partial credit when ratings are close instead of far
+              apart. Values closer to `1.0` indicate stronger agreement.
+              Threshold: `>= 0.6`.
+            - **Threshold meaning:**
+              Any per-dimension QWK value at or above `0.6` is highlighted in
+              green as a practical sign of acceptable agreement.
+            """
+        )
 
     if step_3_results["error_count"]:
         st.warning(f"{step_3_results['error_count']} model scoring calls returned errors.")
 
     st.download_button(
-        "Download Results JSON",
+        "Download run JSON",
         data=json.dumps(step_3_results["export_payload"], indent=2),
         file_name="customerbot-results.json",
         mime="application/json",
     )
     st.download_button(
-        "Download Results CSV",
+        "Download run CSV",
         data=step_3_results["results_df"].to_csv(index=False),
         file_name="customerbot-results.csv",
         mime="text/csv",
     )
 
-st.subheader("Step 4: Optimize Reasoning")
+st.subheader("Step 4: Review disagreements")
+st.caption("Select the LLM that will review and compare the ratings from the LLMs you selected in Step 1.")
 judge_model = st.selectbox(
-    "Judge LLM Model",
+    "Judge model",
     MODEL_OPTIONS,
-    index=MODEL_OPTIONS.index(DEFAULT_MODELS[0]),
+    index=MODEL_OPTIONS.index(DEFAULT_MODELS[2]),
     key="customerbot_judge_model",
 )
 
 step_4_columns = st.columns(2)
 with step_4_columns[0]:
     uploaded_judge_data = st.file_uploader(
-        "Upload Data (CSV)",
+        "Upload scored dataset (CSV)",
         type=["csv"],
         key="customerbot_step_4_upload",
     )
@@ -1025,7 +1280,7 @@ if uploaded_judge_data is not None:
     try:
         step_4_df = pd.read_csv(uploaded_judge_data)
         st.caption(
-            f"Loaded {len(step_4_df)} rows and {len(step_4_df.columns)} columns for Step 4."
+            f"Loaded {len(step_4_df)} rows and {len(step_4_df.columns)} columns for disagreement review."
         )
         (
             step_4_missing_columns,
@@ -1036,7 +1291,7 @@ if uploaded_judge_data is not None:
         if step_4_missing_columns:
             step_4_df = None
             st.error(
-                "Step 4 requires a Step 3 output CSV with these columns present: "
+                "This review step requires a scored CSV with these columns present: "
                 + ", ".join(step_4_missing_columns)
             )
         else:
@@ -1044,12 +1299,12 @@ if uploaded_judge_data is not None:
                 step_4_df, step_4_score_columns
             )
             st.caption(
-                "Detected Step 3 output columns: "
+                "Detected scored columns: "
                 + ", ".join(["row_id", "context", "content"] + step_4_score_columns + step_4_supporting_columns)
             )
-            st.caption("Detected model output groups: " + ", ".join(step_4_model_prefixes))
+            st.caption("Detected model groups: " + ", ".join(step_4_model_prefixes))
             st.caption(
-                f"Disagreement rows available for Step 4 judge review: {len(step_4_disagreement_df)} of {len(step_4_df)}"
+                f"Rows with disagreements ready for review: {len(step_4_disagreement_df)} of {len(step_4_df)}"
             )
             if not step_4_disagreement_df.empty:
                 preview_columns = ["row_id", "context", "content"] + step_4_score_columns
@@ -1064,6 +1319,7 @@ else:
     step_4_df = None
 
 st.subheader("Prompt")
+st.caption("Enter detailed instructions for the reviewer LLM.")
 judge_construct_definition = st.text_area(
     "Construct Definition (Context)",
     value=DEFAULT_JUDGE_CONSTRUCT_DEFINITION,
@@ -1107,20 +1363,20 @@ judge_examples_prompt = st.text_area(
     key="customerbot_step_4_examples",
 )
 
-run_step_4 = st.button("Run Step 4 Judge", type="primary")
+run_step_4 = st.button("Review disagreements", type="primary")
 
 if run_step_4:
     if not openrouter_api_key:
         st.error("OpenRouter API key is required.")
     elif step_4_df is None:
-        st.error("Upload a valid Step 3 output CSV for Step 4.")
+        st.error("Upload a valid scored CSV for disagreement review.")
     elif step_4_disagreement_df.empty:
-        st.error("No disagreement rows were found to send to the judge model.")
+        st.error("No disagreement rows were found to send to the reviewer model.")
     else:
         judge_system_prompt = build_judge_system_prompt()
         judge_user_prompt = build_step_4_user_prompt(step_4_disagreement_df)
 
-        with st.spinner("Running Step 4 judge model..."):
+        with st.spinner("Reviewing disagreement rows..."):
             judge_result = timed_openrouter_chat_completion(
                 api_key=openrouter_api_key,
                 model=judge_model,
@@ -1132,13 +1388,13 @@ if run_step_4:
             )
 
         if judge_result["error"]:
-            st.error(f"Step 4 judge call failed: {judge_result['error']}")
+            st.error(f"Review assistant call failed: {judge_result['error']}")
         else:
             try:
                 parsed_judge_output = validate_judge_output(
                     parse_json_response(judge_result["content"])
                 )
-                st.subheader("Step 4 Judge Output")
+                st.subheader("Review Output")
                 st.metric(
                     "Judge Duration (seconds)",
                     f"{judge_result['duration_seconds']:.2f}",
@@ -1149,7 +1405,7 @@ if run_step_4:
                     height=140,
                 )
                 if parsed_judge_output["sources_of_disagreement"]:
-                    st.subheader("Sources Of Disagreement")
+                    st.subheader("Sources of disagreement")
                     st.dataframe(
                         pd.DataFrame(parsed_judge_output["sources_of_disagreement"]),
                         use_container_width=True,
@@ -1158,7 +1414,7 @@ if run_step_4:
                     st.caption("No disagreement sources were returned.")
 
                 if parsed_judge_output["recommended_edits"]:
-                    st.subheader("Recommended Edits")
+                    st.subheader("Recommended edits")
                     st.dataframe(
                         pd.DataFrame(parsed_judge_output["recommended_edits"]),
                         use_container_width=True,
@@ -1175,7 +1431,7 @@ if run_step_4:
                     mime="application/json",
                 )
             except Exception as exc:
-                st.error(f"Step 4 judge returned invalid JSON: {exc}")
+                st.error(f"Review assistant returned invalid JSON: {exc}")
                 st.text_area(
                     "Raw Step 4 Judge Output",
                     value=judge_result["content"],

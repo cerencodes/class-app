@@ -9,19 +9,24 @@ from openrouter_utils import openrouter_chat_completion
 with open("dale_chall_easy_words.txt", "r", encoding="utf-8") as file:
     DALE_CHALL_EASY_WORDS = {line.strip().lower() for line in file if line.strip()}
 
-st.set_page_config(page_title="Chatbot Evaluator", layout="wide")
+st.set_page_config(
+    page_title="Readability Evaluator",
+    page_icon="odi-logo.jpg",
+    layout="wide",
+)
 
-st.title("Chatbot Evaluator")
-st.write("Start building here.")
+st.title("Readability Evaluator")
+st.write("Assess the readability of AI responses.")
 
 with st.sidebar:
-    st.header("Upload Transcript")
-    st.caption("Upload a JSON file containing one or more chatbot conversations.")
-    uploaded_file = st.file_uploader(
-        "Upload JSON transcript",
-        type=["json"],
-        label_visibility="collapsed",
-    )
+    st.image("odi-logo.jpg", use_container_width=True)
+
+st.header("Response File")
+st.caption("Upload a JSON export with one or more AI conversations.")
+uploaded_file = st.file_uploader(
+    "Upload response JSON",
+    type=["json"],
+)
 if uploaded_file is not None:
     try:
         transcript = json.load(uploaded_file)
@@ -36,7 +41,7 @@ if uploaded_file is not None:
         if isinstance(transcript, dict):
             transcript = [transcript]
         elif not isinstance(transcript, list):
-            st.error("Transcript must be a JSON object or a list of conversation objects.")
+            st.error("The file must be a JSON object or a list of conversation objects.")
             transcript = None
 
     if transcript is not None:
@@ -85,15 +90,15 @@ if uploaded_file is not None:
             )
 
         if valid_conversations:
-            st.success("Transcript loaded and validated.")
-            st.subheader("Validation Summary")
+            st.success("Transcript loaded and ready for review.")
+            st.subheader("Input Check")
             st.write(
                 {
-                    "total_conversations": len(transcript),
-                    "valid_conversations": len(valid_conversations),
-                    "invalid_conversations": invalid_conversations,
-                }
-            )
+                "total_responses": len(transcript),
+                "valid_responses": len(valid_conversations),
+                "invalid_responses": invalid_conversations,
+            }
+        )
 
             if invalid_conversations:
                 st.warning("Some conversations were invalid and were skipped.")
@@ -219,7 +224,7 @@ if uploaded_file is not None:
                     }
                 )
 
-            st.subheader("Readability Performance")
+            st.subheader("Readability Snapshot")
             display_rows = []
             for row in per_conversation_metrics:
                 display_rows.append(
@@ -237,12 +242,7 @@ if uploaded_file is not None:
                         "gunning_fog_index": round(row["gunning_fog_index"], 2),
                         "smog_index": round(row["smog_index"], 2),
                         "ari": round(row["ari"], 2),
-                        "dale_chall_score": round(row["dale_chall_score"], 2),
-                        "clears_all_3_metrics": (
-                            row["ari"] <= 8
-                            and row["flesch_reading_ease"] <= 70
-                            and row["dale_chall_score"] <= 7.0
-                        ),
+                        "new_dale_chall": round(row["dale_chall_score"], 2),
                     }
                 )
             display_df = pd.DataFrame(display_rows)
@@ -263,7 +263,7 @@ if uploaded_file is not None:
                         "gunning_fog_index": "{:.2f}",
                         "smog_index": "{:.2f}",
                         "ari": "{:.2f}",
-                        "dale_chall_score": "{:.2f}",
+                        "new_dale_chall": "{:.2f}",
                     }
                 )
                 .applymap(
@@ -285,7 +285,7 @@ if uploaded_file is not None:
                 .applymap(lambda v: color_good(v, 8, "le"), subset=["ari"])
                 .applymap(
                     lambda v: color_good(v, 7, "le"),
-                    subset=["dale_chall_score"],
+                    subset=["new_dale_chall"],
                 )
             )
             st.dataframe(styled_df, use_container_width=True)
@@ -307,13 +307,7 @@ if uploaded_file is not None:
                 % json.dumps(csv_text),
                 height=40,
             )
-            clears_count = sum(display_df["clears_all_3_metrics"])
             total_count = len(display_df)
-            clears_pct = (clears_count / total_count * 100) if total_count else 0
-            st.write(
-                f"Clears all 3 thresholds: {clears_count} of {total_count} "
-                f"({clears_pct:.1f}%)"
-            )
             ari_pass_count = sum(display_df["ari"] <= 8)
             ari_pass_pct = (ari_pass_count / total_count * 100) if total_count else 0
             st.write(
@@ -346,13 +340,13 @@ if uploaded_file is not None:
                 f"SMOG Index pass rate: {smog_pass_count} of {total_count} "
                 f"({smog_pass_pct:.1f}%)"
             )
-            dale_pass_count = sum(display_df["dale_chall_score"] <= 7.0)
+            dale_pass_count = sum(display_df["new_dale_chall"] <= 7.0)
             dale_pass_pct = (dale_pass_count / total_count * 100) if total_count else 0
             st.write(
-                f"Dale–Chall pass rate: {dale_pass_count} of {total_count} "
+                f"New Dale-Chall Readability Formula pass rate: {dale_pass_count} of {total_count} "
                 f"({dale_pass_pct:.1f}%)"
             )
-            with st.expander("How to interpret these readability scores"):
+            with st.expander("How to read these scores"):
                 st.markdown(
                     """
                     - **ARI (Automated Readability Index):**
@@ -367,9 +361,14 @@ if uploaded_file is not None:
                       Estimates the U.S. school grade level required to understand
                       the text. Rough bands: <=8 middle school, 9-10 high school,
                       11-12 college, and >12 advanced. Threshold: < 9.
-                    - **Dale-Chall:**
-                      Lower scores are easier. About 4.9 or lower is easy,
-                      5.0-6.9 is average, and 7.0+ is difficult. Threshold: <= 7.0.
+                    - **New Dale-Chall Readability Formula:**
+                      Lower scores indicate easier-to-read text. The formula
+                      considers the percentage of words not included in the
+                      Dale-Chall familiar-word list and the average sentence
+                      length. Scores of 4.9 or lower correspond to Grade 4 or
+                      below, 5.0-6.9 correspond to Grades 5-8, and scores of 7.0
+                      or higher correspond to Grade 9 or above. Recommended
+                      threshold: < 7.0.
                     - **SMOG Index:**
                       Estimates years of education required based on the density
                       of complex (3+ syllable) words. Rough bands: <=8 middle school,
@@ -381,13 +380,17 @@ if uploaded_file is not None:
                     """
             )
 
-            st.subheader("Accuracy Performance")
+            st.subheader("LLM Response Analysis")
             st.caption(
-                "Enter your API key and select a model before running the accuracy analysis."
+                "Enter your API key and choose a model to add a light semantic review of the response text."
+            )
+            st.markdown(
+                "- Fill in the **Context Extraction Prompt** to understand user problems from customer messages.\n"
+                "- Fill in the **Product Mention Prompt** to extract the product being recommended in LLM responses."
             )
             openrouter_api_key = st.text_input("OpenRouter API Key", type="password")
             evaluation_model = st.selectbox(
-                "Evaluation Model",
+                "Analysis model",
                 [
                     "openai/gpt-4o-mini",
                     "anthropic/claude-3.5-haiku",
@@ -396,13 +399,13 @@ if uploaded_file is not None:
             )
             default_prompt = (
                 "#Task\n"
-                "Summarize user problem and requested features using only user messages.\n"
+                "Summarize the user's problem and requested features using only user messages.\n"
                 "\n"
                 "#Constraints\n"
                 "- Use only user messages.\n"
-                "- Be concise, avoid filler words.\n"
-                "- Maximum 1 short sentence, omit periods\n"
-                "- No bulletpoints or other text styling\n"
+                "- Be concise and avoid filler words.\n"
+                "- Return at most one short sentence and omit periods.\n"
+                "- Do not use bullet points or text styling.\n"
                 "\n"
                 "#Good Example\n"
                 "- 6'4\" tall, large hands, needs larger grips\n"
@@ -420,18 +423,18 @@ if uploaded_file is not None:
             )
             default_product_prompt = (
                 "#Task\n"
-                "Identify all specific products recommended by the assistant in this "
-                "conversation.\n"
+                "Identify every specific product the assistant recommends in this "
+                "response.\n"
                 "\n"
                 "#Constraints\n"
                 "- Use only assistant messages.\n"
                 "- If multiple products are recommended, separate them with a semicolon "
                 "(;).\n"
                 "- If no product is recommended, return an empty string.\n"
-                "- Output plain text only. No explanations."
+                "- Return plain text only. No explanations."
             )
             product_prompt = st.text_area(
-                "Product Extraction Prompt",
+                "Product Mention Prompt",
                 value=default_product_prompt,
                 height=140,
             )
@@ -501,16 +504,22 @@ if uploaded_file is not None:
 
                         context_rows.append(
                             {
-                                "conversation_id": conversation["conversation_id"],
-                                "context": context_summary.strip(),
-                                "model": conversation["model"],
-                                "product_recommended": product_summary.strip(),
-                            }
-                        )
+                        "conversation_id": conversation["conversation_id"],
+                        "context": context_summary.strip(),
+                        "model": conversation["model"],
+                        "product_recommended": product_summary.strip(),
+                        }
+                    )
 
                     context_df = pd.DataFrame(context_rows)
                     st.table(context_df)
                     context_csv = context_df.to_csv(index=False)
+                    st.download_button(
+                        "Download LLM Response Analysis CSV",
+                        data=context_csv,
+                        file_name="llm-response-analysis.csv",
+                        mime="text/csv",
+                    )
                     components.html(
                         """
                         <button id="copy-context-csv">Copy to clipboard</button>
@@ -529,7 +538,7 @@ if uploaded_file is not None:
                         height=40,
                     )
 
-            st.subheader("Transcript Preview")
+            st.subheader("Response Preview")
             st.json(valid_conversations[:2], expanded=False)
         else:
-            st.error("No valid conversations found in the uploaded transcript.")
+            st.error("No valid conversations were found in the uploaded transcript.")

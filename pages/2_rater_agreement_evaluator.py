@@ -4,54 +4,75 @@ import pandas as pd
 import streamlit as st
 
 
-def calculate_nominal_krippendorff_alpha(ratings_df: pd.DataFrame) -> float | None:
-    pair_counts: dict[tuple[str, str], int] = {}
-    value_counts: dict[str, int] = {}
-    total_pairable_rows = 0
+def normalize_numeric_rating(value: object) -> float | None:
+    if value is None or pd.isna(value):
+        return None
 
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def calculate_quadratic_weighted_kappa(ratings_df: pd.DataFrame) -> float | None:
+    normalized_rows = []
     for _, row in ratings_df.iterrows():
-        row_values = []
-        for value in row.tolist():
-            if pd.notna(value) and str(value).strip():
-                row_values.append(str(value).strip())
-
-        if len(row_values) < 2:
+        values = [normalize_numeric_rating(value) for value in row.tolist()]
+        if any(value is None for value in values):
             continue
+        if len(values) != 2:
+            continue
+        normalized_rows.append((values[0], values[1]))
 
-        total_pairable_rows += 1
-        for value in row_values:
-            value_counts[value] = value_counts.get(value, 0) + 1
-
-        for left_index in range(len(row_values)):
-            for right_index in range(left_index + 1, len(row_values)):
-                pair = tuple(sorted((row_values[left_index], row_values[right_index])))
-                pair_counts[pair] = pair_counts.get(pair, 0) + 1
-
-    if total_pairable_rows == 0:
+    if not normalized_rows:
         return None
 
-    disagreements = 0
-    total_pairs = 0
-    for pair, count in pair_counts.items():
-        total_pairs += count
-        if pair[0] != pair[1]:
-            disagreements += count
+    unique_values = sorted({value for pair in normalized_rows for value in pair})
+    if len(unique_values) <= 1:
+        return 1.0
 
-    if total_pairs == 0:
-        return None
+    value_to_index = {value: index for index, value in enumerate(unique_values)}
+    num_values = len(unique_values)
 
-    observed_disagreement = disagreements / total_pairs
-    total_values = sum(value_counts.values())
-    if total_values <= 1:
-        return None
+    observed = [[0.0 for _ in range(num_values)] for _ in range(num_values)]
+    for left_rating, right_rating in normalized_rows:
+        observed[value_to_index[left_rating]][value_to_index[right_rating]] += 1.0
 
-    expected_agreement = sum((count / total_values) ** 2 for count in value_counts.values())
-    expected_disagreement = 1 - expected_agreement
+    total = float(len(normalized_rows))
+    row_marginals = [sum(row) for row in observed]
+    col_marginals = [sum(observed[row_index][col_index] for row_index in range(num_values)) for col_index in range(num_values)]
 
-    if math.isclose(expected_disagreement, 0.0):
-        return 1.0 if math.isclose(observed_disagreement, 0.0) else None
+    expected = [
+        [
+            (row_marginals[row_index] * col_marginals[col_index]) / total
+            for col_index in range(num_values)
+        ]
+        for row_index in range(num_values)
+    ]
 
-    return 1 - (observed_disagreement / expected_disagreement)
+    denominator_base = float((num_values - 1) ** 2)
+    if math.isclose(denominator_base, 0.0):
+        return 1.0
+
+    observed_weighted = 0.0
+    expected_weighted = 0.0
+    for row_index in range(num_values):
+        for col_index in range(num_values):
+            weight = ((row_index - col_index) ** 2) / denominator_base
+            observed_weighted += weight * observed[row_index][col_index]
+            expected_weighted += weight * expected[row_index][col_index]
+
+    if math.isclose(expected_weighted, 0.0):
+        return 1.0 if math.isclose(observed_weighted, 0.0) else None
+
+    return 1 - (observed_weighted / expected_weighted)
 
 
 def discover_model_fields(uploaded_df: pd.DataFrame) -> tuple[dict[str, set[str]], str]:
@@ -139,31 +160,45 @@ def build_field_rating_frame(
     return pd.DataFrame(ratings_rows)
 
 
-def build_alpha_table(
+def build_qwk_table(
     uploaded_df: pd.DataFrame, model_prefixes: list[str], field_names: list[str], schema_kind: str
 ) -> pd.DataFrame:
     records = []
+    if len(model_prefixes) != 2:
+        return pd.DataFrame(
+            [
+                {
+                    "field": field_name,
+                    "pairable_rows": 0,
+                    "quadratic_weighted_kappa": None,
+                }
+                for field_name in field_names
+            ]
+        )
+
     for field_name in field_names:
         field_ratings_df = build_field_rating_frame(uploaded_df, model_prefixes, field_name, schema_kind)
         comparable_rows = int(len(field_ratings_df.dropna()))
-        alpha = calculate_nominal_krippendorff_alpha(field_ratings_df.dropna())
+        qwk = calculate_quadratic_weighted_kappa(field_ratings_df.dropna())
         records.append(
             {
                 "field": field_name,
                 "pairable_rows": comparable_rows,
-                "krippendorff_alpha": None if alpha is None else round(alpha, 4),
+                "quadratic_weighted_kappa": None if qwk is None else round(qwk, 4),
             }
         )
 
     return pd.DataFrame(records)
 
 
-st.set_page_config(page_title="Alpha Calculator", layout="wide")
+st.set_page_config(page_title="Rater Agreement Evaluator", layout="wide")
 
-st.title("Krippendorff's Alpha Calculator")
-st.caption("Upload a Step 3 CSV and calculate alpha for each shared score pair and the shared average score pair.")
+st.title("Rater Agreement Evaluator")
+st.caption(
+    "Upload the ratings generated by the Customer Ratings Module and calculate the agreement between two raters."
+)
 
-uploaded_file = st.file_uploader("Upload Step 3 CSV", type=["csv"])
+uploaded_file = st.file_uploader("Upload scored dataset (CSV)", type=["csv"])
 
 if uploaded_file is not None:
     try:
@@ -184,6 +219,8 @@ if uploaded_file is not None:
 
             if len(model_prefixes) < 2:
                 st.error("The uploaded CSV must contain at least two model output groups.")
+            elif len(model_prefixes) != 2:
+                st.error("Ordinal agreement requires exactly two model output groups in the uploaded CSV.")
             else:
                 paired_dimensions, aggregate_score_fields = collect_shared_score_fields(model_fields)
                 average_score_fields = [
@@ -195,19 +232,19 @@ if uploaded_file is not None:
 
                 if paired_dimensions:
                     dimension_score_fields = [f"{dimension}_score" for dimension in paired_dimensions]
-                    per_dimension_alpha_df = build_alpha_table(
+                    per_dimension_qwk_df = build_qwk_table(
                         uploaded_df, model_prefixes, dimension_score_fields, schema_kind
                     )
-                    st.subheader("Per-Dimension Alpha")
-                    st.dataframe(per_dimension_alpha_df, use_container_width=True)
+                    st.subheader("Per-dimension QWK")
+                    st.dataframe(per_dimension_qwk_df, use_container_width=True)
                 else:
                     st.warning("No shared scored dimensions with matching reasoning fields were found.")
 
                 if average_score_fields:
-                    average_alpha_df = build_alpha_table(
+                    average_qwk_df = build_qwk_table(
                         uploaded_df, model_prefixes, average_score_fields, schema_kind
                     )
-                    st.subheader("Average Score Alpha")
-                    st.dataframe(average_alpha_df, use_container_width=True)
+                    st.subheader("Average score QWK")
+                    st.dataframe(average_qwk_df, use_container_width=True)
                 else:
                     st.info("No shared average score field was found.")
