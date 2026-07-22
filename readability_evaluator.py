@@ -9,6 +9,224 @@ from openrouter_utils import openrouter_chat_completion
 with open("dale_chall_easy_words.txt", "r", encoding="utf-8") as file:
     DALE_CHALL_EASY_WORDS = {line.strip().lower() for line in file if line.strip()}
 
+
+def validate_and_normalize_conversation_list(
+    transcript: object,
+) -> tuple[list[dict[str, object]] | None, str | None]:
+    if isinstance(transcript, dict):
+        transcript = [transcript]
+    elif not isinstance(transcript, list):
+        return None, "The file must contain a JSON object or a list of conversation objects."
+
+    valid_conversations: list[dict[str, object]] = []
+    invalid_conversations = 0
+
+    for index, conversation in enumerate(transcript, start=1):
+        if not isinstance(conversation, dict):
+            invalid_conversations += 1
+            continue
+
+        conversation_id = conversation.get("conversation_id") or f"conversation_{index}"
+        model = conversation.get("model") or conversation.get("llm") or "unknown"
+        messages = conversation.get("messages")
+
+        if not isinstance(messages, list):
+            invalid_conversations += 1
+            continue
+
+        is_valid = True
+        for message in messages:
+            if not isinstance(message, dict):
+                is_valid = False
+                break
+            role = message.get("role")
+            content = message.get("content")
+            if role not in {"user", "assistant", "system"}:
+                is_valid = False
+                break
+            if not isinstance(content, str) or not content.strip():
+                is_valid = False
+                break
+
+        if not is_valid:
+            invalid_conversations += 1
+            continue
+
+        valid_conversations.append(
+            {
+                "conversation_id": conversation_id,
+                "model": model,
+                "messages": messages,
+            }
+        )
+
+    if not valid_conversations:
+        return None, "No valid conversations were found in the uploaded file."
+
+    if invalid_conversations:
+        st.warning("Some conversations were invalid and were skipped.")
+
+    return valid_conversations, None
+
+
+def parse_csv_messages_cell(value: object) -> list[dict[str, object]] | None:
+    if value is None or pd.isna(value):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict) and {"role", "content"} <= set(parsed):
+            return [parsed]
+        if isinstance(parsed, list):
+            return parsed
+    return None
+
+
+def load_conversations_from_csv(uploaded_file) -> tuple[list[dict[str, object]] | None, str | None]:
+    try:
+        uploaded_df = pd.read_csv(uploaded_file)
+    except Exception as exc:
+        return None, f"Could not read the CSV file: {exc}"
+
+    if uploaded_df.empty:
+        return None, "The CSV file is empty."
+
+    columns_by_lower = {column.lower(): column for column in uploaded_df.columns}
+    conversation_id_col = columns_by_lower.get("conversation_id") or columns_by_lower.get(
+        "conversationid"
+    )
+    model_col = columns_by_lower.get("model") or columns_by_lower.get("llm")
+    messages_col = columns_by_lower.get("messages")
+    role_col = columns_by_lower.get("role")
+    content_col = columns_by_lower.get("content")
+
+    if messages_col:
+        conversations: list[dict[str, object]] = []
+        invalid_conversations = 0
+        for index, row in uploaded_df.iterrows():
+            messages = parse_csv_messages_cell(row[messages_col])
+            if not isinstance(messages, list):
+                invalid_conversations += 1
+                continue
+
+            is_valid = True
+            for message in messages:
+                if not isinstance(message, dict):
+                    is_valid = False
+                    break
+                role = message.get("role")
+                content = message.get("content")
+                if role not in {"user", "assistant", "system"}:
+                    is_valid = False
+                    break
+                if not isinstance(content, str) or not content.strip():
+                    is_valid = False
+                    break
+
+            if not is_valid:
+                invalid_conversations += 1
+                continue
+
+            conversation_id = (
+                row.get(conversation_id_col) if conversation_id_col else None
+            ) or f"conversation_{index + 1}"
+            model = (row.get(model_col) if model_col else None) or "unknown"
+            conversations.append(
+                {
+                    "conversation_id": conversation_id,
+                    "model": model,
+                    "messages": messages,
+                }
+            )
+
+        if not conversations:
+            return None, "No valid conversations were found in the CSV file."
+        if invalid_conversations:
+            st.warning("Some CSV rows were invalid and were skipped.")
+        return conversations, None
+
+    if role_col and content_col:
+        if conversation_id_col is None:
+            if len(uploaded_df) != 1:
+                return (
+                    None,
+                    "CSV files with role/content rows must include a conversation_id column.",
+                )
+            conversation_groups = [(None, uploaded_df)]
+        else:
+            conversation_groups = uploaded_df.groupby(uploaded_df[conversation_id_col], dropna=False)
+
+        conversations = []
+        invalid_conversations = 0
+        for index, (conversation_id, group) in enumerate(conversation_groups, start=1):
+            messages: list[dict[str, str]] = []
+            model_value = "unknown"
+            is_valid = True
+            for _, row in group.iterrows():
+                role = row.get(role_col)
+                content = row.get(content_col)
+                if pd.isna(role) or pd.isna(content):
+                    is_valid = False
+                    break
+                role_text = str(role).strip().lower()
+                content_text = str(content).strip()
+                if role_text not in {"user", "assistant", "system"} or not content_text:
+                    is_valid = False
+                    break
+                messages.append({"role": role_text, "content": content_text})
+                if model_col and model_value == "unknown":
+                    model_candidate = row.get(model_col)
+                    if not pd.isna(model_candidate) and str(model_candidate).strip():
+                        model_value = str(model_candidate).strip()
+
+            if not is_valid or not messages:
+                invalid_conversations += 1
+                continue
+
+            normalized_conversation_id = (
+                str(conversation_id).strip()
+                if conversation_id is not None and str(conversation_id).strip() and str(conversation_id) != "nan"
+                else f"conversation_{index}"
+            )
+            conversations.append(
+                {
+                    "conversation_id": normalized_conversation_id,
+                    "model": model_value,
+                    "messages": messages,
+                }
+            )
+
+        if not conversations:
+            return None, "No valid conversations were found in the CSV file."
+        if invalid_conversations:
+            st.warning("Some CSV conversations were invalid and were skipped.")
+        return conversations, None
+
+    return (
+        None,
+        "CSV files must include either a messages column or role/content columns.",
+    )
+
+
+def load_uploaded_conversations(uploaded_file) -> tuple[list[dict[str, object]] | None, str | None]:
+    file_name = (uploaded_file.name or "").lower()
+    if file_name.endswith(".csv"):
+        return load_conversations_from_csv(uploaded_file)
+
+    try:
+        transcript = json.load(uploaded_file)
+    except json.JSONDecodeError:
+        return None, "Invalid JSON file. Please upload a valid JSON transcript."
+    except Exception as exc:
+        return None, f"Could not read the file: {exc}"
+
+    return validate_and_normalize_conversation_list(transcript)
+
 st.set_page_config(
     page_title="Readability Evaluator",
     page_icon="odi-logo.jpg",
@@ -22,28 +240,17 @@ with st.sidebar:
     st.image("odi-logo.jpg", use_container_width=True)
 
 st.header("Response File")
-st.caption("Upload a JSON export with one or more AI conversations.")
+st.caption(
+    "Upload a JSON or CSV export with one or more AI conversations."
+)
 uploaded_file = st.file_uploader(
-    "Upload response JSON",
-    type=["json"],
+    "Upload response file",
+    type=["json", "csv"],
 )
 if uploaded_file is not None:
-    try:
-        transcript = json.load(uploaded_file)
-    except json.JSONDecodeError:
-        st.error("Invalid JSON file. Please upload a valid JSON transcript.")
-        transcript = None
-    except Exception as exc:
-        st.error(f"Could not read the file: {exc}")
-        transcript = None
-    else:
-        # Normalize to a list so the rest of the app is consistent.
-        if isinstance(transcript, dict):
-            transcript = [transcript]
-        elif not isinstance(transcript, list):
-            st.error("The file must be a JSON object or a list of conversation objects.")
-            transcript = None
-
+    transcript, load_error = load_uploaded_conversations(uploaded_file)
+    if load_error:
+        st.error(load_error)
     if transcript is not None:
         valid_conversations = []
         invalid_conversations = 0
@@ -478,8 +685,10 @@ if uploaded_file is not None:
                                 context_summary = ""
 
                         if not assistant_messages:
+                            assistant_content = ""
                             product_summary = ""
                         else:
+                            assistant_content = "\n".join(assistant_messages)
                             product_prompt_text = (
                                 product_prompt.strip() or default_product_prompt
                             )
@@ -504,12 +713,13 @@ if uploaded_file is not None:
 
                         context_rows.append(
                             {
-                        "conversation_id": conversation["conversation_id"],
-                        "context": context_summary.strip(),
-                        "model": conversation["model"],
-                        "product_recommended": product_summary.strip(),
-                        }
-                    )
+                                "conversation_id": conversation["conversation_id"],
+                                "context": context_summary.strip(),
+                                "content": assistant_content.strip(),
+                                "model": conversation["model"],
+                                "product_recommended": product_summary.strip(),
+                            }
+                        )
 
                     context_df = pd.DataFrame(context_rows)
                     st.table(context_df)

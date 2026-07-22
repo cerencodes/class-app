@@ -27,6 +27,7 @@ python -m streamlit run readability_evaluator.py
   - Dale-Chall score
 - Display pass/fail thresholds and summary pass rates.
 - Run optional OpenRouter-based extraction to summarize user context and identify products recommended by the assistant.
+- Accept transcript uploads as JSON or CSV.
 
 ## Customer Ratings Studio
 
@@ -135,6 +136,23 @@ Upload a JSON object or list of objects shaped like:
 ```
 
 `conversation_id` and `model` are optional; missing values are filled in.
+
+You can also upload a CSV in either of these shapes:
+
+- one row per conversation with `conversation_id`, `model`, and `messages` columns, where `messages` contains a JSON array of message objects
+- one row per message with `conversation_id`, `model`, `role`, and `content` columns
+
+For the row-per-message format, `conversation_id` is required unless the CSV contains only one conversation.
+
+## LLM Response Analysis Output
+
+The optional response analysis export includes these columns:
+
+- `conversation_id`
+- `context`
+- `content`
+- `model`
+- `product_recommended`
 
 ## OpenRouter Setup
 
