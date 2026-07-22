@@ -800,6 +800,9 @@ if "customerbot_step_2_saved" not in st.session_state:
 if "customerbot_step_3_results" not in st.session_state:
     st.session_state["customerbot_step_3_results"] = None
 
+with st.sidebar:
+    st.image("odi-logo.jpg", use_container_width=True)
+
 st.title("Customer Ratings Studio")
 st.caption(
     "Upload the Readability Evaluator output to simulate service quality ratings with LLMs."
