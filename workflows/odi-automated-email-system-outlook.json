@@ -1,0 +1,471 @@
+{
+  "name": "ODI's automated email system final",
+  "nodes": [
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// Handle both nested object and flat string formats\nconst senderName = item.from?.emailAddress?.name || \n                   item.from?.name ||\n                   item.sender?.emailAddress?.name ||\n                   item.from?.split('@')[0] ||\n                   \"\";\n\nconst senderEmail = item.from?.emailAddress?.address || \n                    item.from?.address ||\n                    item.sender?.emailAddress?.address ||\n                    (typeof item.from === 'string' ? item.from : \"\") ||\n                    \"\";\n\nconst bodyText = item.body?.content || \n                 item.bodyPreview || \n                 \"\";\n\nconst subject = item.subject || \"\";\nconst messageId = item.id || \"\";\nconst conversationId = item.conversationId || \"\";\n\nreturn [{\n  json: {\n    senderName,\n    senderEmail,\n    bodyText,\n    subject,\n    messageId,\n    conversationId\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        -96
+      ],
+      "id": "189bd9ff-abf9-4f9d-ba91-c43d3d88eaa0",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "getProduct"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        1840,
+        176
+      ],
+      "id": "33320efd-67ad-42cb-bbcd-5ed6cf5c0fc8",
+      "name": "Simple Memory"
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "generateEmail"
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.3,
+      "position": [
+        2192,
+        176
+      ],
+      "id": "4c5e2799-7364-4b8c-94d9-25d24d2f148c",
+      "name": "Simple Memory1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an ODI Grip Expert. Your task is to analyze a customer email and match it to the most appropriate ODI grip product(s).\nEmail Details:\n\nCustomer: {{ $('Code in JavaScript').item.json.senderName }}\nEmail Content: {{ $('Code in JavaScript').item.json.bodyText }}\n\nALLOWED_PRODUCT_NAMES (must match EXACTLY):\n{{ $('Get row(s) in sheet').all().map(i => i.json.name).join('\\n') }}\nPRODUCT_LIST_FULL:\n{{ $('Get row(s) in sheet').all().map(i => JSON.stringify(i.json)).join('\\n') }}\nGOAL:\nSelect the best ODI product(s) that match the customer's riding style, problem, and preferences.\nDECISION PROCESS (silent — do not show your reasoning):\nStep 1 — Identify rider requirements:\n\nRiding discipline (BMX, MTB, downhill, cross-country, enduro)\nHand size or grip thickness preference\nComfort or vibration reduction need\nRace feel, control, or traction preference\nDurability needs\nColor or co-branding preference (if mentioned)\n\nStep 2 — Match requirements to PRODUCT_LIST_FULL using these attributes:\n\nriding_style\nthickness (grip diameter / hand size fit)\ndamping_level (vibration reduction / comfort)\nfeel and traction\nergonomics\ncolors or co_branding (if appearance is mentioned)\n\nStep 3 — Prioritize rider needs in this order:\n\nriding_style compatibility\nthickness / hand size fit\ndamping_level and comfort\nfeel and traction\nsecondary preferences (color, branding)\n\nStep 4 — Select the product(s) that best satisfy the most critical requirements.\nDECISION RULES:\n\nUse ONLY products from ALLOWED_PRODUCT_NAMES\nRecommend TOP 1–3 most relevant products if enough information is available\nDo NOT invent products or features not in PRODUCT_LIST_FULL\nIf the customer's question is missing key details (riding style, use case, problem), set action to \"follow_up\" and ask ONE specific clarifying question\nIf no product clearly matches, set action to \"follow_up\" and leave recommended_products as an empty array []\n\nReturn ONLY valid JSON in this schema with no extra text, no markdown, no explanation:\n{\n\"action\": \"recommend\" or \"follow_up\",\n\"recommended_products\": [\n{\n\"name\": \"string\",\n\"why\": \"string\"\n}\n],\n\"follow_up_question\": \"string or null\"\n}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        1744,
+        -80
+      ],
+      "id": "ee6b823e-9ed7-445a-a72e-cfc37aac4122",
+      "name": "getProduct",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=System Message: You are ODI's automated email response system. Generate a clear, professional, and friendly email response to a customer based ONLY on the structured recommendation output provided by a previous AI agent. Parse the JSON data and use exact values. No placeholders or brackets. Never invent products or features not present in the JSON input.\n\nUser Message:\nParse this recommendation output and write a professional email reply.\n\n{{ $json.output }}\n\nCustomer name: {{ $('Code in JavaScript').item.json.senderName }}\n\nRequirements:\n- Start with \"Hi [customer name],\" using the exact name provided above\n- Do NOT include a subject line (this is a reply)\n- Sign off as \"ODI Customer Service Team\"\n- Thank them for reaching out to ODI\n- If action is \"recommend\": present each recommended product with its name and why it was selected for them specifically\n- If action is \"follow_up\": politely explain you need a bit more information, then ask the follow_up_question from the JSON\n- Do NOT mention AI, automation, or that this was generated by a system\n- Do NOT use placeholder text like [product name] or [reason]\n- Use plain text formatting only\n- Use line breaks between paragraphs\n- No HTML tags\n- Write in short paragraphs, maximum 4 sentences per paragraph\n- Keep tone warm, helpful, and on-brand for a cycling accessories company",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        2096,
+        -80
+      ],
+      "id": "3c959836-996b-4374-b8b1-07e8232b6866",
+      "name": "generateEmail"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_EMAIL_LOG_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "ODI_email_log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sender_email": "={{ $('Code in JavaScript').item.json.senderEmail }}",
+            "product_recommendation": "={{ JSON.parse($('getProduct').item.json.output).recommended_products.map(p => p.name).join(', ') }}",
+            "email_draft": "={{ $('generateEmail').item.json.output }}",
+            "customer_question": "={{ $('Code in JavaScript').item.json.bodyText }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sender_email",
+              "displayName": "sender_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "customer_question",
+              "displayName": "customer_question",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "product_recommendation",
+              "displayName": "product_recommendation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email_draft",
+              "displayName": "email_draft",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2848,
+        -80
+      ],
+      "id": "69b75485-9d2c-4103-81e2-89351b3cf2e5",
+      "name": "Append row in sheet"
+    },
+    {
+      "parameters": {
+        "model": "anthropic/claude-sonnet-4.5",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        2096,
+        160
+      ],
+      "id": "a9dc7b80-d3b7-418a-9bf2-45d7a96a9e50",
+      "name": "OpenRouter Chat Model"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1744,
+        176
+      ],
+      "id": "9dbec34d-b420-4727-925c-6422a51ff06e",
+      "name": "OpenRouter Chat Model1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an email classifier for ODI Grips, a bicycle grip company.\n\nRead the following customer email and decide if it is asking about product recommendations, grip suggestions, or which product to buy.\n\nEmail:\n{{ $('Code in JavaScript').item.json.bodyText }}\n\nReply with ONLY one word: YES or NO\nYES = this email is asking about products or recommendations\nNO = this email is about something else (orders, complaints, general questions, spam etc)",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        960,
+        -80
+      ],
+      "id": "8cfdabf1-9b93-428b-8f41-f04b68b33c87",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [
+        1184,
+        160
+      ],
+      "id": "e86aa055-411c-48d3-be0d-fd3f2e95c14c",
+      "name": "OpenRouter Chat Model2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "294ec22f-149c-43f3-a51a-d2ea5eb09fe7",
+              "leftValue": "={{ $json.text }}",
+              "rightValue": "YES",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1296,
+        -80
+      ],
+      "id": "8d318ff4-c73f-44b3-9182-9183f057c597",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {
+          "foldersToInclude": [
+            "YOUR_OUTLOOK_FOLDER_ID"
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        576,
+        -96
+      ],
+      "id": "879ab155-de1c-40cd-b72e-8ead55b4ad20",
+      "name": "Microsoft Outlook Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_PRODUCT_LIST_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "ODI_PRODUCT_LIST",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1520,
+        -80
+      ],
+      "id": "ad4794cc-9a6e-4167-a3d5-292f0da56aed",
+      "name": "Get row(s) in sheet"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "=Re: {{ $('Code in JavaScript').item.json.subject }}",
+        "bodyContent": "={{ $('generateEmail').item.json.output }}\n\n--- Original Message ---\nFrom: {{ $('Code in JavaScript').item.json.senderEmail }}\nSubject: {{ $('Microsoft Outlook Trigger').item.json.subject }}\n\n{{ $('Microsoft Outlook Trigger').item.json.bodyPreview }}",
+        "additionalFields": {
+          "toRecipients": "={{ $('Code in JavaScript').item.json.senderEmail }}"
+        }
+      },
+      "type": "n8n-nodes-base.microsoftOutlook",
+      "typeVersion": 2,
+      "position": [
+        2528,
+        -80
+      ],
+      "id": "4ae7875a-e9a2-4712-983f-8ebab490d54e",
+      "name": "Create a draft1"
+    }
+  ],
+  "connections": {
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory": {
+      "ai_memory": [
+        [
+          {
+            "node": "getProduct",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "generateEmail",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "getProduct": {
+      "main": [
+        [
+          {
+            "node": "generateEmail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "generateEmail": {
+      "main": [
+        [
+          {
+            "node": "Create a draft1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "generateEmail",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "getProduct",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenRouter Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Microsoft Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "getProduct",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a draft1": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": {},
+  "pinData": {},
+  "triggerCount": 0,
+  "meta": null
+}

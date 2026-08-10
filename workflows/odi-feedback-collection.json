@@ -1,0 +1,219 @@
+{
+  "name": "ODI Feedback Collection",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "odi-feedback",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "ae2e01a3-59cc-4bd7-b4b8-13c0ae441521",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        240,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_EMAIL_LOG_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "ODI_email_log",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 1493455769,
+          "mode": "list",
+          "cachedResultName": "Feedback",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_SHEET_ID/edit"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": "={{ $json.timestamp }}",
+            "thread_id": "={{ $json.thread_id }}",
+            "customer_email": "={{ $json.customer_email }}",
+            "rating": "={{ $json.rating }}",
+            "rating_label": "={{ $json.rating_label }}",
+            "source": "={{ $json.source }}",
+            "recommended_product": "={{ $json.recommended_product }}",
+            "customer_question": "={{ $json.customer_question }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "timestamp",
+              "displayName": "timestamp",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_email",
+              "displayName": "customer_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rating",
+              "displayName": "rating",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "rating_label",
+              "displayName": "rating_label",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "source",
+              "displayName": "source",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommended_product",
+              "displayName": "recommended_product",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "customer_question",
+              "displayName": "customer_question",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "d4850312-d4c0-4e81-bb0a-8d57c8052188",
+      "name": "Append to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        688,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!DOCTYPE html>\n<html>\n  <body style=\"font-family: Arial, sans-serif; text-align: center; padding: 40px;\">\n    <h2>Thank you for your feedback.</h2>\n    <p>Your rating has been recorded.</p>\n  </body>\n</html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "id": "c6cdfb45-e775-4013-a830-5f9631320af0",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        912,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $input.first().json.query || {};\n\nconst labels = {\n  \"1\": \"Not helpful\",\n  \"2\": \"Slightly helpful\",\n  \"3\": \"Neutral\",\n  \"4\": \"Helpful\",\n  \"5\": \"Very helpful\"\n};\n\nreturn [\n  {\n    json: {\n      timestamp: new Date().toISOString(),\n      thread_id: q.thread_id || \"\",\n      customer_email: q.email || \"\",\n      rating: q.rating || \"\",\n      rating_label: labels[q.rating] || \"Unknown\",\n      source: \"email_rating_link\"\n    }\n  }\n];"
+      },
+      "id": "74f1d902-829f-427d-80a7-427f5322fa3f",
+      "name": "Extract Feedback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append to Google Sheets": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Feedback": {
+      "main": [
+        [
+          {
+            "node": "Append to Google Sheets",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "staticData": {},
+  "pinData": {},
+  "triggerCount": 1,
+  "meta": null
+}
